@@ -179,9 +179,17 @@
         <div class="add-key-section">
           <div class="add-key-header">
             <label for="newKeyInput" class="input-label" id="addKeyLabel">Add API Key</label>
-            <button id="importKeysBtn" class="text-btn" title="Import API keys from a .txt file">
-              <span class="material-symbols-rounded" style="font-size: 16px;">upload_file</span> Import .txt
-            </button>
+            <div class="header-key-tools" style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+              <button id="getGroqKeyBtn" class="text-btn" title="Open Groq Console to create API keys (console.groq.com/keys)">
+                <span class="material-symbols-rounded" style="font-size: 15px;">open_in_new</span> Get Key
+              </button>
+              <button id="importKeysBtn" class="text-btn" title="Import API keys from a .txt file">
+                <span class="material-symbols-rounded" style="font-size: 15px;">upload_file</span> Import .txt
+              </button>
+              <button id="exportKeysBtn" class="text-btn" title="Export API keys to a .txt file">
+                <span class="material-symbols-rounded" style="font-size: 15px;">download</span> Export .txt
+              </button>
+            </div>
           </div>
           <div class="add-key-row">
             <input type="password" id="newKeyInput" placeholder="Paste API Key..." autocomplete="off" />
@@ -189,7 +197,7 @@
               <span class="material-symbols-rounded">add</span> Add
             </button>
           </div>
-          <div class="input-hint">Enter single key, paste multiple keys, or import from a .txt file.</div>
+          <div class="input-hint">Enter single key, paste multiple keys, or import/export .txt files.</div>
           <div id="addKeyFeedback" class="feedback-msg"></div>
         </div>
         <input type="file" id="importKeysInput" accept=".txt,text/plain" style="display: none;" />
@@ -197,9 +205,15 @@
         <!-- Utility Toolbar -->
         <div class="keys-toolbar">
           <span class="toolbar-title">Present Keys</span>
-          <div class="toolbar-buttons">
+          <div class="toolbar-buttons" style="display: flex; flex-wrap: wrap; gap: 6px;">
+            <button id="getGroqKeyBtnToolbar" class="text-btn" title="Open Groq Console to create API keys">
+              <span class="material-symbols-rounded">open_in_new</span> Get Key
+            </button>
             <button id="importKeysBtnToolbar" class="text-btn" title="Import API keys from a .txt file">
               <span class="material-symbols-rounded">upload_file</span> Import .txt
+            </button>
+            <button id="exportKeysBtnToolbar" class="text-btn" title="Export API keys to a .txt file">
+              <span class="material-symbols-rounded">download</span> Export .txt
             </button>
             <button id="resetExhaustedBtn" class="text-btn" title="Reset all exhausted flags">
               <span class="material-symbols-rounded">refresh</span> Reset Status

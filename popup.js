@@ -133,10 +133,13 @@ const addKeyBtn            = document.getElementById("addKeyBtn");
 const addKeyFeedback       = document.getElementById("addKeyFeedback");
 const resetExhaustedBtn    = document.getElementById("resetExhaustedBtn");
 const clearAllKeysBtn      = document.getElementById("clearAllKeysBtn");
-const keysListContainer    = document.getElementById("keysListContainer");
 const importKeysBtn        = document.getElementById("importKeysBtn");
 const importKeysBtnToolbar = document.getElementById("importKeysBtnToolbar");
 const importKeysInput      = document.getElementById("importKeysInput");
+const exportKeysBtn        = document.getElementById("exportKeysBtn");
+const exportKeysBtnToolbar = document.getElementById("exportKeysBtnToolbar");
+const getGroqKeyBtn        = document.getElementById("getGroqKeyBtn");
+const getGroqKeyBtnToolbar = document.getElementById("getGroqKeyBtnToolbar");
 
 // ── Safe Storage Adapter (Chrome Extension storage with localStorage fallback) ─
 const storage = {
@@ -1030,6 +1033,45 @@ function handleFileImport(e) {
     e.target.value = "";
   };
   reader.readAsText(file);
+}
+
+function exportKeys() {
+  const keysToExport = apiKeys.map(k => typeof k === "string" ? k : k.key).filter(Boolean);
+  if (keysToExport.length === 0) {
+    if (addKeyFeedback) {
+      addKeyFeedback.textContent = "No API keys available to export.";
+      addKeyFeedback.className = "feedback-msg error";
+    }
+    return;
+  }
+  const textContent = keysToExport.join("\n");
+  const blob = new Blob([textContent], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const prov = typeof getActiveProvider === "function" ? getActiveProvider() : { name: "Groq" };
+  const fileName = `${(prov.name || "api").toLowerCase().replace(/[^a-z0-9]+/g, "_")}_keys.txt`;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 100);
+
+  if (addKeyFeedback) {
+    addKeyFeedback.textContent = `Exported ${keysToExport.length} key(s) to ${fileName}`;
+    addKeyFeedback.className = "feedback-msg success";
+  }
+  addLog("info", "keys", `Exported ${keysToExport.length} API key(s) for ${prov.name}.`);
+}
+
+function openGroqConsoleKeys() {
+  if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.create) {
+    chrome.tabs.create({ url: "https://console.groq.com/keys" });
+  } else {
+    window.open("https://console.groq.com/keys", "_blank");
+  }
 }
 
 async function removeKey(index) {
@@ -2670,6 +2712,22 @@ if (importKeysBtnToolbar) {
 
 if (importKeysInput) {
   importKeysInput.addEventListener("change", handleFileImport);
+}
+
+if (exportKeysBtn) {
+  exportKeysBtn.addEventListener("click", exportKeys);
+}
+
+if (exportKeysBtnToolbar) {
+  exportKeysBtnToolbar.addEventListener("click", exportKeys);
+}
+
+if (getGroqKeyBtn) {
+  getGroqKeyBtn.addEventListener("click", openGroqConsoleKeys);
+}
+
+if (getGroqKeyBtnToolbar) {
+  getGroqKeyBtnToolbar.addEventListener("click", openGroqConsoleKeys);
 }
 
 if (resetExhaustedBtn) {
