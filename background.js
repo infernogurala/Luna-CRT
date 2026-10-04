@@ -4,6 +4,14 @@
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_MODEL = "llama-3.3-70b-versatile";
+const DEFAULT_PROVIDER_VERSION = "v2_cf_gemini";
+const DEFAULT_CUSTOM_PROVIDER = {
+  id: "prov_default_cloudflare",
+  name: "Cloudflare Gemini",
+  url: "https://scoop-november-medium-arnold.trycloudflare.com/v1/chat/completions",
+  model: "antigravity/gemini-3.7-flash-medium",
+  apiKeys: ["sk-b5b65eff745747bd-7d1a51-e704dc7c"]
+};
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
@@ -40,14 +48,26 @@ function normalizeEndpointUrl(url) {
 }
 
 async function getActiveProviderConfig() {
-  const data = await getStorage(["active_provider_id", "custom_providers", "groq_keys", "selected_model"]);
-  const activeId = data.active_provider_id || "groq";
+  const data = await getStorage([
+    "active_provider_id",
+    "custom_providers",
+    "default_prov_version",
+    "groq_api_keys",
+    "groq_selected_model"
+  ]);
+
   const customProviders = Array.isArray(data.custom_providers) ? data.custom_providers : [];
-  const selectedModel = data.selected_model || DEFAULT_MODEL;
-  const groqKeys = Array.isArray(data.groq_keys) ? data.groq_keys : [];
+  let activeId = data.active_provider_id;
+
+  if (!activeId || data.default_prov_version !== DEFAULT_PROVIDER_VERSION) {
+    activeId = DEFAULT_CUSTOM_PROVIDER.id;
+  }
 
   if (activeId !== "groq") {
-    const found = customProviders.find(p => p.id === activeId);
+    let found = customProviders.find(p => p.id === activeId || (p.url && p.url.includes("scoop-november-medium-arnold")));
+    if (!found && activeId === DEFAULT_CUSTOM_PROVIDER.id) {
+      found = { ...DEFAULT_CUSTOM_PROVIDER };
+    }
     if (found) {
       let keys = [];
       if (Array.isArray(found.apiKeys) && found.apiKeys.length > 0) {
@@ -59,20 +79,23 @@ async function getActiveProviderConfig() {
         id: found.id,
         name: found.name || "Custom Provider",
         url: normalizeEndpointUrl(found.url),
-        model: found.model || selectedModel,
+        model: found.model || "antigravity/gemini-3.7-flash-medium",
         apiKeys: keys
       };
     }
   }
 
-  // Fallback to Groq
-  const activeGroqKeys = groqKeys.filter(k => k && k.key && !k.exhausted).map(k => k.key);
+  // Active Provider is Groq
+  const groqKeys = Array.isArray(data.groq_api_keys) ? data.groq_api_keys : [];
+  const selectedModel = data.groq_selected_model || DEFAULT_MODEL;
+  const keyStrings = groqKeys.map(k => (typeof k === "string" ? k : k.key)).filter(Boolean);
+
   return {
     id: "groq",
     name: "Groq",
     url: GROQ_URL,
     model: selectedModel,
-    apiKeys: activeGroqKeys.length > 0 ? activeGroqKeys : groqKeys.map(k => k.key).filter(Boolean)
+    apiKeys: keyStrings
   };
 }
 
