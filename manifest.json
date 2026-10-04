@@ -38,5 +38,19 @@
       "js": ["content.js"],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "commands": {
+    "toggle-status": {
+      "suggested_key": {
+        "default": "Alt+T"
+      },
+      "description": "Toggle extension status indicator"
+    },
+    "trigger-action": {
+      "suggested_key": {
+        "default": "Alt+A"
+      },
+      "description": "Trigger active extension action"
+    }
+  }
 }

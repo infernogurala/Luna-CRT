@@ -1,24 +1,6 @@
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const OPENCODE_URL = "https://opencode.ai/zen/v1/chat/completions";
-const OPENCODE_MODELS_URL = "https://opencode.ai/zen/v1/models";
 const DEFAULT_MODEL = "llama-3.3-70b-versatile";
-const DEFAULT_OPENCODE_MODEL = "opencode/big-pickle";
-
 let selectedModel = DEFAULT_MODEL;
-let opencodeSelectedModel = DEFAULT_OPENCODE_MODEL;
-
-const OPENCODE_FREE_MODELS = [
-  { id: "opencode/big-pickle", name: "Big Pickle (Free Stealth Model)", group: "Featured Free Models" },
-  { id: "deepseek-v4-flash-free", name: "DeepSeek V4 Flash (Free)", group: "Featured Free Models" },
-  { id: "mimo-v2.5-free", name: "MiMo V2.5 (Free)", group: "Featured Free Models" },
-  { id: "mimo-v2-pro-free", name: "MiMo V2 Pro (Free)", group: "Featured Free Models" },
-  { id: "minimax-m2.5-free", name: "MiniMax M2.5 (Free)", group: "Open Models (Free)" },
-  { id: "nemotron-3-super-free", name: "Nemotron 3 Super (Free)", group: "Open Models (Free)" },
-  { id: "qwen3.6-plus-free", name: "Qwen 3.6 Plus (Free)", group: "Open Models (Free)" },
-  { id: "north-mini-code-free", name: "North Mini Code (Free)", group: "Open Models (Free)" },
-  { id: "space-bunny-free", name: "Space Bunny (Free)", group: "Experimental (Free)" },
-  { id: "longcat-2.5-preview-free", name: "LongCat 2.5 Preview (Free)", group: "Experimental (Free)" }
-];
 
 
 // ── Elements ──────────────────────────────────────────────────────────────────
@@ -56,6 +38,23 @@ const providerStatusBadge   = document.getElementById("providerStatusBadge");
 const providerStatusText    = document.getElementById("providerStatusText");
 
 let currentFullUrl = "";
+
+function notifyTabProcessUpdate(updateData) {
+  if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.query) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]?.id) {
+        const prov = typeof getActiveProvider === "function" ? getActiveProvider() : null;
+        const msg = {
+          type: "UPDATE_PROCESS",
+          provider: prov ? prov.name : "Groq",
+          model: prov ? (prov.model || selectedModel) : selectedModel,
+          ...updateData
+        };
+        chrome.tabs.sendMessage(tabs[0].id, msg).catch(() => {});
+      }
+    });
+  }
+}
 
 function updatePageUrlDisplay(url) {
   currentFullUrl = url || "";
@@ -179,11 +178,6 @@ let customProviders = [DEFAULT_CUSTOM_PROVIDER];
 let editingProviderId = null;
 
 const PRESETS = {
-  opencode: {
-    name: "OpenCode Zen",
-    url: "https://opencode.ai/zen/v1/chat/completions",
-    model: "opencode/big-pickle"
-  },
   cf_gemini: {
     name: "Cloudflare Gemini",
     url: "https://scoop-november-medium-arnold.trycloudflare.com/v1/chat/completions",
@@ -249,16 +243,6 @@ function getActiveProvider() {
       apiKeys: apiKeys.map(k => k.key)
     };
   }
-  if (activeProviderId === "opencode") {
-    return {
-      id: "opencode",
-      name: "OpenCode Zen",
-      type: "opencode",
-      url: OPENCODE_URL,
-      model: opencodeSelectedModel || DEFAULT_OPENCODE_MODEL,
-      apiKeys: apiKeys.map(k => k.key)
-    };
-  }
   const found = customProviders.find(p => p.id === activeProviderId);
   if (found) return found;
   activeProviderId = "groq";
@@ -293,7 +277,7 @@ async function loadProviders() {
       });
     } else {
       activeProviderId = res.active_provider_id || DEFAULT_CUSTOM_PROVIDER.id;
-      if (activeProviderId !== "groq" && activeProviderId !== "opencode" && !customProviders.some(p => p.id === activeProviderId)) {
+      if (activeProviderId !== "groq" && !customProviders.some(p => p.id === activeProviderId)) {
         activeProviderId = DEFAULT_CUSTOM_PROVIDER.id;
       }
     }
@@ -435,22 +419,11 @@ function renderProviderSelect() {
   if (!providerSelect) return;
   providerSelect.innerHTML = "";
 
-  const builtinGroup = document.createElement("optgroup");
-  builtinGroup.label = "Built-in Providers";
-
   const groqOpt = document.createElement("option");
   groqOpt.value = "groq";
   groqOpt.textContent = "Groq (Built-in)";
   if (activeProviderId === "groq") groqOpt.selected = true;
-  builtinGroup.appendChild(groqOpt);
-
-  const opencodeOpt = document.createElement("option");
-  opencodeOpt.value = "opencode";
-  opencodeOpt.textContent = "OpenCode Zen (Built-in)";
-  if (activeProviderId === "opencode") opencodeOpt.selected = true;
-  builtinGroup.appendChild(opencodeOpt);
-
-  providerSelect.appendChild(builtinGroup);
+  providerSelect.appendChild(groqOpt);
 
   if (customProviders.length > 0) {
     const group = document.createElement("optgroup");
@@ -481,7 +454,7 @@ function renderProviderSelect() {
   providerSelect.appendChild(actionsGroup);
 
   if (modalProvidersCountTag) {
-    modalProvidersCountTag.textContent = `${2 + customProviders.length} configured`;
+    modalProvidersCountTag.textContent = `${1 + customProviders.length} configured`;
   }
 }
 
@@ -518,38 +491,6 @@ function renderProvidersList() {
     if (actBtn) actBtn.addEventListener("click", () => switchProvider("groq"));
   }
   providersListContainer.appendChild(groqCard);
-
-  // 2. OpenCode Zen Built-in Card
-  const isOpenCodeActive = activeProviderId === "opencode";
-  const opencodeCard = document.createElement("div");
-  opencodeCard.className = `provider-card ${isOpenCodeActive ? 'active-provider' : ''}`;
-  opencodeCard.innerHTML = `
-    <div class="provider-card-info">
-      <div class="provider-card-header">
-        <span class="provider-card-name">OpenCode Zen</span>
-        <span class="provider-badge builtin">Built-in</span>
-        ${isOpenCodeActive ? '<span class="provider-badge active">Active</span>' : ''}
-      </div>
-      <div class="provider-card-url">${escapeHtml(OPENCODE_URL)}</div>
-      <div class="provider-card-meta">
-        <span>Model: <span class="provider-card-model">${escapeHtml(opencodeSelectedModel || DEFAULT_OPENCODE_MODEL)}</span></span>
-        <span>•</span>
-        <span>Free Models Included</span>
-      </div>
-    </div>
-    <div class="provider-card-actions">
-      ${!isOpenCodeActive ? `
-        <button class="primary-btn activate-prov-btn" style="padding: 4px 10px; font-size: 11px;" title="Use OpenCode Zen">
-          Activate
-        </button>
-      ` : ''}
-    </div>
-  `;
-  if (!isOpenCodeActive) {
-    const actBtn = opencodeCard.querySelector(".activate-prov-btn");
-    if (actBtn) actBtn.addEventListener("click", () => switchProvider("opencode"));
-  }
-  providersListContainer.appendChild(opencodeCard);
 
   // 2. Custom Providers
   customProviders.forEach(p => {
@@ -785,76 +726,6 @@ function restoreGroqModelOptions() {
   `;
 }
 
-function restoreOpenCodeModelOptions(modelsList = OPENCODE_FREE_MODELS) {
-  if (!modelSelect) return;
-  const groups = {};
-  modelsList.forEach(m => {
-    const grp = m.group || "Free Models";
-    if (!groups[grp]) groups[grp] = [];
-    groups[grp].push(m);
-  });
-
-  let html = "";
-  for (const [grpName, models] of Object.entries(groups)) {
-    html += `<optgroup label="${escapeHtml(grpName)}">`;
-    models.forEach(m => {
-      html += `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`;
-    });
-    html += `</optgroup>`;
-  }
-  html += `
-    <optgroup label="Custom">
-      <option value="custom">Custom Model...</option>
-    </optgroup>
-  `;
-  modelSelect.innerHTML = html;
-}
-
-async function fetchLiveOpenCodeModels() {
-  if (activeProviderId !== "opencode") return;
-  try {
-    const res = await fetch(OPENCODE_MODELS_URL, { method: "GET" });
-    if (!res.ok) return;
-    const data = await res.json();
-    let rawList = [];
-    if (Array.isArray(data)) rawList = data;
-    else if (data && Array.isArray(data.data)) rawList = data.data;
-
-    if (rawList.length > 0) {
-      const liveModels = rawList.map(m => {
-        const id = typeof m === "string" ? m : (m.id || m.name);
-        const name = typeof m === "object" && m.name ? m.name : id;
-        const isFree = id.toLowerCase().includes("free") || id.toLowerCase().includes("pickle") || id.toLowerCase().includes("bunny");
-        return {
-          id,
-          name: `${name} ${isFree ? '(Free)' : ''}`,
-          group: isFree ? "OpenCode Free Models" : "Available Models"
-        };
-      });
-
-      const combined = [...OPENCODE_FREE_MODELS];
-      liveModels.forEach(lm => {
-        if (!combined.some(b => b.id === lm.id)) {
-          combined.push(lm);
-        }
-      });
-
-      if (activeProviderId === "opencode" && modelSelect) {
-        const currentVal = modelSelect.value;
-        restoreOpenCodeModelOptions(combined);
-        const hasOpt = Array.from(modelSelect.options).some(opt => opt.value === currentVal);
-        if (hasOpt) {
-          modelSelect.value = currentVal;
-        } else if (currentVal === "custom") {
-          modelSelect.value = "custom";
-        }
-      }
-    }
-  } catch (err) {
-    // Silent fallback
-  }
-}
-
 async function loadModel() {
   if (activeProviderId === "groq") {
     try {
@@ -884,36 +755,6 @@ async function loadModel() {
       }
     } catch (e) {
       selectedModel = DEFAULT_MODEL;
-    }
-  } else if (activeProviderId === "opencode") {
-    try {
-      const res = await storage.get(["opencode_selected_model", "opencode_custom_model"]);
-      const savedModel = res.opencode_selected_model || DEFAULT_OPENCODE_MODEL;
-      const customModel = res.opencode_custom_model || "";
-
-      if (customModelInput && customModel) {
-        customModelInput.value = customModel;
-      }
-
-      opencodeSelectedModel = savedModel;
-
-      if (modelSelect) {
-        restoreOpenCodeModelOptions();
-        const hasOption = Array.from(modelSelect.options).some(opt => opt.value === savedModel);
-        if (hasOption) {
-          modelSelect.value = savedModel;
-          if (customModelRow) customModelRow.style.display = "none";
-        } else {
-          modelSelect.value = "custom";
-          if (customModelRow) {
-            customModelRow.style.display = "flex";
-            if (customModelInput) customModelInput.value = savedModel;
-          }
-        }
-      }
-      fetchLiveOpenCodeModels();
-    } catch (e) {
-      opencodeSelectedModel = DEFAULT_OPENCODE_MODEL;
     }
   } else {
     // Custom Provider active
@@ -950,17 +791,6 @@ async function setModel(modelName, isCustom = false) {
     } catch (e) {
       console.error("Failed to save selected model:", e);
     }
-  } else if (activeProviderId === "opencode") {
-    opencodeSelectedModel = cleanName || DEFAULT_OPENCODE_MODEL;
-    try {
-      const dataToSave = { opencode_selected_model: opencodeSelectedModel };
-      if (isCustom) {
-        dataToSave.opencode_custom_model = opencodeSelectedModel;
-      }
-      await storage.set(dataToSave);
-    } catch (e) {
-      console.error("Failed to save selected OpenCode model:", e);
-    }
   } else {
     // Save to custom provider
     const prov = customProviders.find(p => p.id === activeProviderId);
@@ -973,8 +803,7 @@ async function setModel(modelName, isCustom = false) {
       triggerProviderStatusCheck();
     }
   }
-  const activeModelName = activeProviderId === "opencode" ? opencodeSelectedModel : selectedModel;
-  addLog("info", "model", `Active model set to: ${activeModelName}`);
+  addLog("info", "model", `Active model set to: ${selectedModel}`);
 }
 
 // ── Key rotation & management state ──────────────────────────────────────────
@@ -988,16 +817,6 @@ async function loadKeys() {
       const res = await storage.get(["groq_api_keys"]);
       if (res && Array.isArray(res.groq_api_keys) && res.groq_api_keys.length > 0) {
         const validKeys = res.groq_api_keys
-          .map(k => (typeof k === "string" ? k.trim() : ""))
-          .filter(Boolean);
-        apiKeys = validKeys.map(k => ({ key: k, exhausted: false }));
-      } else {
-        apiKeys = [];
-      }
-    } else if (activeProviderId === "opencode") {
-      const res = await storage.get(["opencode_api_keys"]);
-      if (res && Array.isArray(res.opencode_api_keys) && res.opencode_api_keys.length > 0) {
-        const validKeys = res.opencode_api_keys
           .map(k => (typeof k === "string" ? k.trim() : ""))
           .filter(Boolean);
         apiKeys = validKeys.map(k => ({ key: k, exhausted: false }));
@@ -1027,8 +846,6 @@ async function saveKeysToStorage() {
   try {
     if (activeProviderId === "groq") {
       await storage.set({ groq_api_keys: keyStrings });
-    } else if (activeProviderId === "opencode") {
-      await storage.set({ opencode_api_keys: keyStrings });
     } else {
       const prov = customProviders.find(p => p.id === activeProviderId);
       if (prov) {
@@ -1272,10 +1089,36 @@ function markKeyExhausted() {
   updateKeysUI();
 }
 
-// ── Logging ───────────────────────────────────────────────────────────────────
-function addLog(type, label, message) {
-  if (!message || !String(message).trim()) return;
-  logEmpty.style.display = "none";
+// ── Logging & History Persistence ───────────────────────────────────────────────
+let chatHistory = [];
+
+async function loadChatHistory() {
+  try {
+    const data = await storage.get(["chat_history"]);
+    if (Array.isArray(data.chat_history) && data.chat_history.length > 0) {
+      chatHistory = data.chat_history;
+      if (logEmpty) logEmpty.style.display = "none";
+      chatHistory.forEach(item => {
+        if (item.kind === "log") {
+          renderLogEntryDOM(item.type, item.label, item.message);
+        } else if (item.kind === "answer") {
+          renderAnswerCardDOM(item.optionText, item.isSuccess);
+        }
+      });
+      if (logArea) logArea.scrollTop = logArea.scrollHeight;
+    }
+  } catch (e) {}
+}
+
+async function saveChatHistory() {
+  try {
+    if (chatHistory.length > 100) chatHistory = chatHistory.slice(-100);
+    await storage.set({ chat_history: chatHistory });
+  } catch (e) {}
+}
+
+function renderLogEntryDOM(type, label, message) {
+  if (!logArea) return;
   const entry = document.createElement("div");
   entry.className = `log-entry ${type}`;
   const formattedMsg = escapeHtml(message).replace(/\n/g, "<br>");
@@ -1284,10 +1127,16 @@ function addLog(type, label, message) {
   logArea.scrollTop = logArea.scrollHeight;
 }
 
-function addAnswerCard(optionText, isSuccess = true) {
-  if (!optionText) return;
-  logEmpty.style.display = "none";
+function addLog(type, label, message) {
+  if (!message || !String(message).trim()) return;
+  if (logEmpty) logEmpty.style.display = "none";
+  renderLogEntryDOM(type, label, message);
+  chatHistory.push({ kind: "log", type, label, message });
+  saveChatHistory();
+}
 
+function renderAnswerCardDOM(optionText, isSuccess = true) {
+  if (!logArea) return;
   const entry = document.createElement("div");
   entry.className = "log-entry answer-card";
 
@@ -1343,6 +1192,15 @@ function addAnswerCard(optionText, isSuccess = true) {
 
   logArea.appendChild(entry);
   logArea.scrollTop = logArea.scrollHeight;
+  return entry;
+}
+
+function addAnswerCard(optionText, isSuccess = true) {
+  if (!optionText) return;
+  if (logEmpty) logEmpty.style.display = "none";
+  const entry = renderAnswerCardDOM(optionText, isSuccess);
+  chatHistory.push({ kind: "answer", optionText, isSuccess });
+  saveChatHistory();
   return entry;
 }
 
@@ -1591,6 +1449,18 @@ async function callLLM(messages, retries = 0, fallbackConfig = {}) {
     headers["X-Title"] = "Luna cool girl";
   }
 
+  notifyTabProcessUpdate({
+    status: "Processing",
+    progress: 50,
+    currentStep: 3,
+    stepUpdates: [
+      { id: 1, status: "completed", detail: "Scanned page DOM context" },
+      { id: 2, status: "completed", detail: "Payload structured successfully" },
+      { id: 3, status: "active", detail: `Querying ${providerName} (${modelToUse})...` }
+    ],
+    logText: `🧠 Requesting AI reasoning from ${providerName} (${modelToUse})`
+  });
+
   let res;
   try {
     res = await fetch(endpointUrl, {
@@ -1599,6 +1469,13 @@ async function callLLM(messages, retries = 0, fallbackConfig = {}) {
       body: JSON.stringify(payload)
     });
   } catch (networkErr) {
+    notifyTabProcessUpdate({
+      status: "Error",
+      statusText: "Status: Error",
+      stepUpdates: [{ id: 3, status: "error", detail: `Connection error: ${networkErr.message}` }],
+      logText: `❌ Network error connecting to ${providerName}`,
+      logType: "error"
+    });
     throw new Error(`Network error connecting to ${providerName} (${endpointUrl}): ${networkErr.message}`);
   }
 
@@ -1617,9 +1494,7 @@ async function callLLM(messages, retries = 0, fallbackConfig = {}) {
       await sleep(300);
       return callLLM(messages, retries + 1, fallbackConfig);
     }
-    const consoleHelp = isGroq
-      ? "in Groq Console (console.groq.com/keys)"
-      : (provider && provider.id === "opencode" ? "in OpenCode Zen Console (opencode.ai/zen)" : `for ${providerName}`);
+    const consoleHelp = isGroq ? "in Groq Console (console.groq.com/keys)" : `for ${providerName}`;
     throw new Error(`All API keys failed authentication (401). Please verify your keys ${consoleHelp}.`);
   }
 
@@ -1668,6 +1543,18 @@ async function callLLM(messages, retries = 0, fallbackConfig = {}) {
   if (!choice) {
     throw new Error(`${providerName} returned an empty response.`);
   }
+
+  notifyTabProcessUpdate({
+    status: "Processing",
+    progress: 75,
+    currentStep: 4,
+    stepUpdates: [
+      { id: 3, status: "completed", detail: `Response received from ${providerName}` },
+      { id: 4, status: "active", detail: "Applying answer actions to page..." }
+    ],
+    logText: `⚡ Received AI response payload (${choice.length} chars)`
+  });
+
   return choice;
 }
 const callGroq = callLLM;
@@ -2989,6 +2876,7 @@ if (toggleProvKeyPwBtn && provKeyInput) {
   await loadProviders();
   await loadKeys();
   await loadModel();
+  await loadChatHistory();
   const tab = await getCurrentTab();
   if (tab?.url) updatePageUrlDisplay(tab.url);
 })();
@@ -3007,6 +2895,15 @@ if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.onUpdated) {
       if (currentTab && currentTab.id === tabId && currentTab.url) {
         updatePageUrlDisplay(currentTab.url);
       }
+    }
+  });
+}
+
+if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg && msg.type === "EXECUTE_ACTION") {
+      const answerBtn = document.querySelector(".answer-current-btn");
+      if (answerBtn) answerBtn.click();
     }
   });
 }
