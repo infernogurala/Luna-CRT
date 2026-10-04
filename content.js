@@ -1,9 +1,19 @@
 // Content script — injected into pages
-// Luna CRT — Compact Live Process Manager HUD
+// Luna CRT — Compact Live Activity Status Indicator HUD
+// Fullscreen mode compatible • Manual Alt+T toggle
 
 (function () {
   if (window.__agentInjected) return;
   window.__agentInjected = true;
+
+  function getHudParent() {
+    return document.fullscreenElement
+        || document.webkitFullscreenElement
+        || document.mozFullScreenElement
+        || document.msFullscreenElement
+        || document.body
+        || document.documentElement;
+  }
 
   // --- Toast System ---
   let toastContainer = null;
@@ -27,7 +37,7 @@
         fontFamily: "system-ui, -apple-system, sans-serif"
       });
 
-      const parent = document.body || document.documentElement;
+      const parent = getHudParent();
       if (parent) parent.appendChild(toastContainer);
       return toastContainer;
     } catch (e) {
@@ -54,9 +64,9 @@
         padding: "10px 16px",
         borderRadius: "10px",
         fontSize: "13px",
-        fontWeight: "500",
+        fontWeight: "600",
         maxWidth: "340px",
-        boxShadow: "0 4px 14px rgba(0, 0, 0, 0.25)",
+        boxShadow: "0 6px 20px rgba(0, 0, 0, 0.4)",
         opacity: "0",
         transform: "translateY(12px)",
         transition: "all 0.25s cubic-bezier(0.2, 0, 0, 1)",
@@ -92,14 +102,20 @@
     title: "Status: Active",
     detail: "Ready for commands",
     model: "Llama 3.3",
-    progress: 0, // 0 to 100
+    progress: 0,
     isProcessing: false
   };
 
-  function createHud() {
-    if (hudHost && document.contains(hudHost)) return;
+  function syncHudParent() {
+    if (!hudHost) return;
+    const parent = getHudParent();
+    if (parent && hudHost.parentElement !== parent) {
+      try { parent.appendChild(hudHost); } catch (e) {}
+    }
+  }
 
-    try {
+  function createHud() {
+    if (!hudHost) {
       hudHost = document.createElement("div");
       hudHost.id = "__luna-live-hud";
       Object.assign(hudHost.style, {
@@ -107,6 +123,8 @@
         top: "16px",
         right: "16px",
         zIndex: "2147483647",
+        display: "block",
+        pointerEvents: "none",
         fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
       });
 
@@ -117,25 +135,28 @@
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
         .card {
-          width: 290px;
-          background: rgba(24, 24, 37, 0.94);
+          width: 320px;
+          max-width: calc(100vw - 32px);
+          background: rgba(20, 20, 32, 0.96);
           backdrop-filter: blur(16px);
           -webkit-backdrop-filter: blur(16px);
-          border: 1px solid rgba(255, 255, 255, 0.12);
+          border: 1px solid rgba(137, 180, 250, 0.3);
           border-radius: 12px;
           padding: 12px 14px;
           color: #cdd6f4;
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04);
+          box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06);
           user-select: none;
           position: relative;
           overflow: hidden;
           transition: all 0.25s cubic-bezier(0.2, 0, 0, 1);
+          pointer-events: auto;
         }
 
         .card-top {
           display: flex;
           align-items: center;
           justify-content: space-between;
+          gap: 8px;
           margin-bottom: 6px;
         }
 
@@ -143,30 +164,32 @@
           display: flex;
           align-items: center;
           gap: 8px;
+          min-width: 0;
+          flex: 1;
         }
 
         .dot {
-          width: 8px;
-          height: 8px;
+          width: 9px;
+          height: 9px;
           border-radius: 50%;
           background: #a6e3a1;
-          box-shadow: 0 0 8px #a6e3a1;
+          box-shadow: 0 0 10px #a6e3a1;
           flex-shrink: 0;
           transition: background 0.3s, box-shadow 0.3s;
         }
         .dot.processing {
           background: #cba6f7;
-          box-shadow: 0 0 10px #cba6f7;
+          box-shadow: 0 0 12px #cba6f7;
           animation: pulse 1.2s infinite ease-in-out;
         }
         .dot.error {
           background: #f38ba8;
-          box-shadow: 0 0 10px #f38ba8;
+          box-shadow: 0 0 12px #f38ba8;
         }
 
         @keyframes pulse {
           0% { transform: scale(0.9); opacity: 0.7; }
-          50% { transform: scale(1.25); opacity: 1; }
+          50% { transform: scale(1.3); opacity: 1; }
           100% { transform: scale(0.9); opacity: 0.7; }
         }
 
@@ -175,15 +198,21 @@
           font-weight: 700;
           color: #f5e0dc;
           letter-spacing: 0.2px;
+          white-space: nowrap;
         }
 
         .badge {
-          background: rgba(137, 180, 250, 0.14);
+          background: rgba(137, 180, 250, 0.18);
           color: #89b4fa;
-          padding: 2px 7px;
+          padding: 3px 8px;
           border-radius: 6px;
           font-size: 10.5px;
           font-weight: 700;
+          max-width: 140px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          flex-shrink: 1;
         }
 
         .close-btn {
@@ -199,25 +228,27 @@
           font-size: 13px;
           cursor: pointer;
           transition: all 0.2s;
+          flex-shrink: 0;
         }
         .close-btn:hover {
-          background: rgba(255, 255, 255, 0.1);
+          background: rgba(255, 255, 255, 0.12);
           color: #fff;
         }
 
         .detail {
-          font-size: 11.5px;
-          color: #bac2de;
-          line-height: 1.35;
+          font-size: 12px;
+          color: #e0def4;
+          line-height: 1.4;
           word-break: break-word;
-          min-height: 16px;
+          min-height: 18px;
+          font-weight: 500;
         }
 
         .progress-bar {
           position: absolute;
           bottom: 0;
           left: 0;
-          height: 2.5px;
+          height: 3px;
           background: linear-gradient(90deg, #89b4fa, #cba6f7, #a6e3a1);
           border-radius: 0 2px 2px 0;
           transition: width 0.3s ease, opacity 0.3s ease;
@@ -234,12 +265,10 @@
       card.className = "card";
       card.id = "card";
       shadowRoot.appendChild(card);
+    }
 
-      const parent = document.body || document.documentElement;
-      if (parent) parent.appendChild(hudHost);
-
-      renderHud();
-    } catch (e) {}
+    syncHudParent();
+    renderHud();
   }
 
   function renderHud() {
@@ -248,13 +277,20 @@
     if (!card) return;
 
     if (!hudState.visible) {
-      hudHost.style.display = "none";
+      if (hudHost) hudHost.style.display = "none";
       return;
     }
-    hudHost.style.display = "block";
+
+    syncHudParent();
+    if (hudHost) hudHost.style.display = "block";
 
     const dotClass = hudState.status === "Processing" ? "processing" : (hudState.status === "Error" ? "error" : "");
     const showProgress = hudState.isProcessing && hudState.progress > 0;
+
+    let displayModel = hudState.model || "Llama 3.3";
+    if (displayModel.includes("/")) {
+      displayModel = displayModel.split("/").pop();
+    }
 
     card.innerHTML = `
       <div class="card-top">
@@ -262,8 +298,8 @@
           <div class="dot ${dotClass}"></div>
           <span class="title">${hudState.title}</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 6px;">
-          <span class="badge">${hudState.model}</span>
+        <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+          <span class="badge" title="${hudState.model}">${displayModel}</span>
           <button class="close-btn" id="closeBtn" title="Hide (Alt+T)">✕</button>
         </div>
       </div>
@@ -281,6 +317,7 @@
   }
 
   function updateLiveProcess(data = {}) {
+    hudState.visible = true;
     createHud();
 
     if (data.status !== undefined) {
@@ -308,13 +345,23 @@
     createHud();
     hudState.visible = !hudState.visible;
     renderHud();
+    showToast(hudState.visible ? "Activity Indicator: ON" : "Activity Indicator: OFF", "action");
   }
 
   function triggerActionScan() {
+    hudState.visible = true;
     try {
       chrome.runtime.sendMessage({ type: "EXECUTE_ACTION" });
     } catch (e) {}
   }
+
+  // Fullscreen event listeners
+  ["fullscreenchange", "webkitfullscreenchange", "mozfullscreenchange", "MSFullscreenChange"].forEach(evtName => {
+    document.addEventListener(evtName, () => {
+      syncHudParent();
+      renderHud();
+    });
+  });
 
   // Keyboard Shortcuts (Alt+T toggle, Alt+A action)
   window.addEventListener("keydown", (e) => {
@@ -354,4 +401,3 @@
   window.__agentShowToast = showToast;
   window.__lunaUpdateProcess = updateLiveProcess;
 })();
-

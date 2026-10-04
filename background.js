@@ -76,12 +76,32 @@ async function getActiveProviderConfig() {
   };
 }
 
-function updateTabHud(tabId, updateData) {
+async function ensureContentScript(tabId) {
   if (!tabId) return;
-  chrome.tabs.sendMessage(tabId, {
-    type: "UPDATE_PROCESS",
-    ...updateData
-  }).catch(() => {});
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"]
+    });
+  } catch (e) {}
+}
+
+async function updateTabHud(tabId, updateData) {
+  if (!tabId) return;
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: "UPDATE_PROCESS",
+      ...updateData
+    });
+  } catch (err) {
+    await ensureContentScript(tabId);
+    setTimeout(() => {
+      chrome.tabs.sendMessage(tabId, {
+        type: "UPDATE_PROCESS",
+        ...updateData
+      }).catch(() => {});
+    }, 100);
+  }
 }
 
 // ── DOM Snapshot Generator ───────────────────────────────────────────────────
@@ -525,15 +545,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === "EXECUTE_ACTION" || msg.type === "ANSWER_CURRENT") {
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      const tabId = msg.tabId || tabs[0]?.id;
-      if (tabId) {
-        const res = await runAgentOnTab(tabId, msg.cmd || "Answer this question.");
-        sendResponse(res);
-      } else {
-        sendResponse({ success: false, message: "No active tab" });
-      }
-    });
+    const tabId = msg.tabId || sender?.tab?.id;
+    if (tabId) {
+      runAgentOnTab(tabId, msg.cmd || "Answer this question.").then(res => sendResponse(res));
+    } else {
+      chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+        const targetId = tabs[0]?.id;
+        if (targetId) {
+          const res = await runAgentOnTab(targetId, msg.cmd || "Answer this question.");
+          sendResponse(res);
+        } else {
+          sendResponse({ success: false, message: "No active tab" });
+        }
+      });
+    }
     return true;
   }
   return true;
