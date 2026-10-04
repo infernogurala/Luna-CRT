@@ -1,13 +1,60 @@
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL    = "llama-3.3-70b-versatile";
+const OPENCODE_URL = "https://opencode.ai/zen/v1/chat/completions";
+const OPENCODE_MODELS_URL = "https://opencode.ai/zen/v1/models";
+const DEFAULT_MODEL = "llama-3.3-70b-versatile";
+const DEFAULT_OPENCODE_MODEL = "opencode/big-pickle";
+
+let selectedModel = DEFAULT_MODEL;
+let opencodeSelectedModel = DEFAULT_OPENCODE_MODEL;
+
+const OPENCODE_FREE_MODELS = [
+  { id: "opencode/big-pickle", name: "Big Pickle (Free Stealth Model)", group: "Featured Free Models" },
+  { id: "deepseek-v4-flash-free", name: "DeepSeek V4 Flash (Free)", group: "Featured Free Models" },
+  { id: "mimo-v2.5-free", name: "MiMo V2.5 (Free)", group: "Featured Free Models" },
+  { id: "mimo-v2-pro-free", name: "MiMo V2 Pro (Free)", group: "Featured Free Models" },
+  { id: "minimax-m2.5-free", name: "MiniMax M2.5 (Free)", group: "Open Models (Free)" },
+  { id: "nemotron-3-super-free", name: "Nemotron 3 Super (Free)", group: "Open Models (Free)" },
+  { id: "qwen3.6-plus-free", name: "Qwen 3.6 Plus (Free)", group: "Open Models (Free)" },
+  { id: "north-mini-code-free", name: "North Mini Code (Free)", group: "Open Models (Free)" },
+  { id: "space-bunny-free", name: "Space Bunny (Free)", group: "Experimental (Free)" },
+  { id: "longcat-2.5-preview-free", name: "LongCat 2.5 Preview (Free)", group: "Experimental (Free)" }
+];
+
 
 // ── Elements ──────────────────────────────────────────────────────────────────
-const logArea    = document.getElementById("logArea");
-const logEmpty   = document.getElementById("logEmpty");
-const cmdInput   = document.getElementById("cmdInput");
-const sendBtn    = document.getElementById("sendBtn");
-const thinking   = document.getElementById("thinking");
-const clearBtn   = document.getElementById("clearBtn");
+const logArea            = document.getElementById("logArea");
+const logEmpty           = document.getElementById("logEmpty");
+const cmdInput           = document.getElementById("cmdInput");
+const sendBtn            = document.getElementById("sendBtn");
+const thinking           = document.getElementById("thinking");
+const clearBtn           = document.getElementById("clearBtn");
+const modelSelect        = document.getElementById("modelSelect");
+const customModelRow     = document.getElementById("customModelRow");
+const customModelInput   = document.getElementById("customModelInput");
+const saveCustomModelBtn = document.getElementById("saveCustomModelBtn");
+
+// Provider Elements
+const providerSelect        = document.getElementById("providerSelect");
+const openProviderModalBtn  = document.getElementById("openProviderModalBtn");
+const providerModalOverlay  = document.getElementById("providerModalOverlay");
+const closeProviderModalBtn = document.getElementById("closeProviderModalBtn");
+const modalProvidersCountTag= document.getElementById("modalProvidersCountTag");
+const providerFormTitle     = document.getElementById("providerFormTitle");
+const cancelEditProviderBtn = document.getElementById("cancelEditProviderBtn");
+const provNameInput         = document.getElementById("provNameInput");
+const provUrlInput          = document.getElementById("provUrlInput");
+const provKeyInput          = document.getElementById("provKeyInput");
+const toggleProvKeyPwBtn    = document.getElementById("toggleProvKeyPwBtn");
+const provModelInput        = document.getElementById("provModelInput");
+const saveProviderBtn       = document.getElementById("saveProviderBtn");
+const saveProviderBtnText   = document.getElementById("saveProviderBtnText");
+const providerFeedback      = document.getElementById("providerFeedback");
+const providersListContainer= document.getElementById("providersListContainer");
+const keysModalTitleText    = document.getElementById("keysModalTitleText");
+const addKeyLabel           = document.getElementById("addKeyLabel");
+const providerStatusBadge   = document.getElementById("providerStatusBadge");
+const providerStatusText    = document.getElementById("providerStatusText");
+
 let currentFullUrl = "";
 
 function updatePageUrlDisplay(url) {
@@ -92,6 +139,843 @@ const importKeysBtn        = document.getElementById("importKeysBtn");
 const importKeysBtnToolbar = document.getElementById("importKeysBtnToolbar");
 const importKeysInput      = document.getElementById("importKeysInput");
 
+// ── Safe Storage Adapter (Chrome Extension storage with localStorage fallback) ─
+const storage = {
+  async get(keys) {
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      return chrome.storage.local.get(keys);
+    }
+    const res = {};
+    for (const k of keys) {
+      const v = localStorage.getItem(k);
+      if (v !== null) {
+        try { res[k] = JSON.parse(v); } catch { res[k] = v; }
+      }
+    }
+    return res;
+  },
+  async set(items) {
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      return chrome.storage.local.set(items);
+    }
+    for (const [k, v] of Object.entries(items)) {
+      localStorage.setItem(k, JSON.stringify(v));
+    }
+  }
+};
+
+// ── Provider state & presets ──────────────────────────────────────────────────
+const DEFAULT_PROVIDER_VERSION = "v2_cf_gemini";
+const DEFAULT_CUSTOM_PROVIDER = {
+  id: "prov_default_cloudflare",
+  name: "Cloudflare Gemini",
+  url: "https://scoop-november-medium-arnold.trycloudflare.com/v1/chat/completions",
+  model: "antigravity/gemini-3.7-flash-medium",
+  apiKeys: ["sk-b5b65eff745747bd-7d1a51-e704dc7c"]
+};
+
+let activeProviderId = DEFAULT_CUSTOM_PROVIDER.id;
+let customProviders = [DEFAULT_CUSTOM_PROVIDER];
+let editingProviderId = null;
+
+const PRESETS = {
+  opencode: {
+    name: "OpenCode Zen",
+    url: "https://opencode.ai/zen/v1/chat/completions",
+    model: "opencode/big-pickle"
+  },
+  cf_gemini: {
+    name: "Cloudflare Gemini",
+    url: "https://scoop-november-medium-arnold.trycloudflare.com/v1/chat/completions",
+    model: "antigravity/gemini-3.7-flash-medium",
+    key: "sk-b5b65eff745747bd-7d1a51-e704dc7c"
+  },
+  openai: {
+    name: "OpenAI",
+    url: "https://api.openai.com/v1/chat/completions",
+    model: "gpt-4o"
+  },
+  openrouter: {
+    name: "OpenRouter",
+    url: "https://openrouter.ai/api/v1/chat/completions",
+    model: "anthropic/claude-3.5-sonnet"
+  },
+  deepseek: {
+    name: "DeepSeek",
+    url: "https://api.deepseek.com/chat/completions",
+    model: "deepseek-chat"
+  },
+  ollama: {
+    name: "Ollama (Local)",
+    url: "http://localhost:11434/v1/chat/completions",
+    model: "llama3.2"
+  },
+  lmstudio: {
+    name: "LM Studio (Local)",
+    url: "http://localhost:1234/v1/chat/completions",
+    model: "local-model"
+  }
+};
+
+function normalizeEndpointUrl(url) {
+  if (!url) return "";
+  let clean = url.trim().replace(/\/+$/, "");
+  if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
+    clean = "https://" + clean;
+  }
+  try {
+    const u = new URL(clean);
+    if (u.pathname === "/" || u.pathname === "") {
+      u.pathname = "/v1/chat/completions";
+    } else if (u.pathname === "/v1") {
+      u.pathname = "/v1/chat/completions";
+    } else if (!u.pathname.endsWith("/chat/completions") && !u.pathname.includes("/completions")) {
+      u.pathname = u.pathname.replace(/\/+$/, "") + "/chat/completions";
+    }
+    return u.toString();
+  } catch (e) {
+    return clean;
+  }
+}
+
+function getActiveProvider() {
+  if (activeProviderId === "groq") {
+    return {
+      id: "groq",
+      name: "Groq",
+      type: "groq",
+      url: GROQ_URL,
+      model: selectedModel || DEFAULT_MODEL,
+      apiKeys: apiKeys.map(k => k.key)
+    };
+  }
+  if (activeProviderId === "opencode") {
+    return {
+      id: "opencode",
+      name: "OpenCode Zen",
+      type: "opencode",
+      url: OPENCODE_URL,
+      model: opencodeSelectedModel || DEFAULT_OPENCODE_MODEL,
+      apiKeys: apiKeys.map(k => k.key)
+    };
+  }
+  const found = customProviders.find(p => p.id === activeProviderId);
+  if (found) return found;
+  activeProviderId = "groq";
+  return {
+    id: "groq",
+    name: "Groq",
+    type: "groq",
+    url: GROQ_URL,
+    model: selectedModel || DEFAULT_MODEL,
+    apiKeys: apiKeys.map(k => k.key)
+  };
+}
+
+async function loadProviders() {
+  try {
+    const res = await storage.get(["active_provider_id", "custom_providers", "default_prov_version"]);
+    customProviders = Array.isArray(res.custom_providers) ? res.custom_providers : [];
+
+    // Ensure user's default provider is configured and set as active on initial run or version upgrade
+    if (res.default_prov_version !== DEFAULT_PROVIDER_VERSION) {
+      activeProviderId = DEFAULT_CUSTOM_PROVIDER.id;
+      const existingIdx = customProviders.findIndex(p => p.id === DEFAULT_CUSTOM_PROVIDER.id || p.url.includes("scoop-november-medium-arnold"));
+      if (existingIdx !== -1) {
+        customProviders[existingIdx] = { ...DEFAULT_CUSTOM_PROVIDER };
+      } else {
+        customProviders.unshift({ ...DEFAULT_CUSTOM_PROVIDER });
+      }
+      await storage.set({
+        active_provider_id: activeProviderId,
+        custom_providers: customProviders,
+        default_prov_version: DEFAULT_PROVIDER_VERSION
+      });
+    } else {
+      activeProviderId = res.active_provider_id || DEFAULT_CUSTOM_PROVIDER.id;
+      if (activeProviderId !== "groq" && activeProviderId !== "opencode" && !customProviders.some(p => p.id === activeProviderId)) {
+        activeProviderId = DEFAULT_CUSTOM_PROVIDER.id;
+      }
+    }
+  } catch (e) {
+    customProviders = [{ ...DEFAULT_CUSTOM_PROVIDER }];
+    activeProviderId = DEFAULT_CUSTOM_PROVIDER.id;
+  }
+  renderProviderSelect();
+  renderProvidersList();
+  triggerProviderStatusCheck();
+}
+
+async function saveProvidersToStorage() {
+  try {
+    await storage.set({
+      active_provider_id: activeProviderId,
+      custom_providers: customProviders
+    });
+  } catch (e) {
+    console.error("Failed to save providers to storage:", e);
+  }
+}
+
+async function switchProvider(id) {
+  if (id === activeProviderId) return;
+  activeProviderId = id;
+  await saveProvidersToStorage();
+  await loadKeys();
+  await loadModel();
+  renderProviderSelect();
+  renderProvidersList();
+  const prov = getActiveProvider();
+  addLog("info", "provider", `Switched active provider to: ${prov.name} (${prov.model})`);
+  triggerProviderStatusCheck();
+}
+
+// ── Real-time Provider Status Signal (Active or Unavailable) ───────────────────
+let currentStatusAbortController = null;
+
+async function triggerProviderStatusCheck() {
+  const badge = document.getElementById("providerStatusBadge");
+  const textElem = document.getElementById("providerStatusText");
+  if (!badge || !textElem) return;
+
+  badge.className = "provider-status-badge checking";
+  badge.title = "Testing connection to provider...";
+  textElem.textContent = "Checking";
+
+  if (currentStatusAbortController) {
+    currentStatusAbortController.abort();
+  }
+  currentStatusAbortController = new AbortController();
+  const signal = currentStatusAbortController.signal;
+
+  const prov = getActiveProvider();
+  const startTime = Date.now();
+
+  try {
+    const isGroq = !prov || prov.id === "groq";
+    const endpoint = prov ? normalizeEndpointUrl(prov.url) : GROQ_URL;
+    let checkUrl = endpoint.replace(/\/chat\/completions$/, "/models");
+    if (checkUrl === endpoint) {
+      checkUrl = endpoint.replace(/\/+$/, "") + "/models";
+    }
+
+    const headers = {};
+    const key = (prov.apiKeys && prov.apiKeys.length > 0) ? prov.apiKeys[0] : (getActiveKey() || "");
+    if (key) {
+      headers["Authorization"] = `Bearer ${key}`;
+    }
+    if (endpoint.includes("openrouter.ai")) {
+      headers["HTTP-Referer"] = "https://github.com/infernoGurala/Luna-CRT";
+      headers["X-Title"] = "Luna cool girl";
+    }
+
+    let isAvailable = false;
+    let detail = "";
+
+    // 1. Try GET /models with 5s timeout
+    try {
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout (5s)")), 5000));
+      const fetchPromise = fetch(checkUrl, { method: "GET", headers, signal });
+      const res = await Promise.race([fetchPromise, timeoutPromise]);
+      
+      if (res.ok) {
+        isAvailable = true;
+        const latency = Date.now() - startTime;
+        detail = `Active (${latency}ms)`;
+      } else if (res.status === 401 || res.status === 403) {
+        isAvailable = false;
+        detail = "Auth Failed (401)";
+      } else {
+        // Fallback: minimal chat completion if /models returned 404/405
+        const compRes = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...headers },
+          body: JSON.stringify({
+            model: prov.model,
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 1
+          }),
+          signal
+        });
+        if (compRes.ok) {
+          isAvailable = true;
+          const latency = Date.now() - startTime;
+          detail = `Active (${latency}ms)`;
+        } else {
+          isAvailable = false;
+          detail = `HTTP ${compRes.status}`;
+        }
+      }
+    } catch (fetchErr) {
+      if (signal.aborted) return;
+      isAvailable = false;
+      detail = fetchErr.message || "Connection failed";
+    }
+
+    if (signal.aborted) return;
+
+    if (isAvailable) {
+      badge.className = "provider-status-badge active";
+      textElem.textContent = "Active";
+      badge.title = `${prov.name} is Active (${detail}).\nClick to re-check.`;
+    } else {
+      badge.className = "provider-status-badge unavailable";
+      textElem.textContent = "Unavailable";
+      badge.title = `${prov.name} is Unavailable (${detail}).\nClick to retry.`;
+    }
+  } catch (err) {
+    if (signal.aborted) return;
+    badge.className = "provider-status-badge unavailable";
+    textElem.textContent = "Unavailable";
+    badge.title = `Error checking provider: ${err.message}\nClick to retry.`;
+  }
+}
+
+function renderProviderSelect() {
+  if (!providerSelect) return;
+  providerSelect.innerHTML = "";
+
+  const builtinGroup = document.createElement("optgroup");
+  builtinGroup.label = "Built-in Providers";
+
+  const groqOpt = document.createElement("option");
+  groqOpt.value = "groq";
+  groqOpt.textContent = "Groq (Built-in)";
+  if (activeProviderId === "groq") groqOpt.selected = true;
+  builtinGroup.appendChild(groqOpt);
+
+  const opencodeOpt = document.createElement("option");
+  opencodeOpt.value = "opencode";
+  opencodeOpt.textContent = "OpenCode Zen (Built-in)";
+  if (activeProviderId === "opencode") opencodeOpt.selected = true;
+  builtinGroup.appendChild(opencodeOpt);
+
+  providerSelect.appendChild(builtinGroup);
+
+  if (customProviders.length > 0) {
+    const group = document.createElement("optgroup");
+    group.label = "Custom Providers";
+    customProviders.forEach(p => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.name;
+      opt.title = `${p.name} (${p.model})`;
+      if (activeProviderId === p.id) opt.selected = true;
+      group.appendChild(opt);
+    });
+    providerSelect.appendChild(group);
+  }
+
+  const actionsGroup = document.createElement("optgroup");
+  actionsGroup.label = "Configure";
+  const addOpt = document.createElement("option");
+  addOpt.value = "__add_new__";
+  addOpt.textContent = "+ Add Custom Provider...";
+  actionsGroup.appendChild(addOpt);
+
+  const manageOpt = document.createElement("option");
+  manageOpt.value = "__manage__";
+  manageOpt.textContent = "⚙ Manage Providers...";
+  actionsGroup.appendChild(manageOpt);
+
+  providerSelect.appendChild(actionsGroup);
+
+  if (modalProvidersCountTag) {
+    modalProvidersCountTag.textContent = `${2 + customProviders.length} configured`;
+  }
+}
+
+function renderProvidersList() {
+  if (!providersListContainer) return;
+  providersListContainer.innerHTML = "";
+
+  // 1. Groq Built-in Card
+  const groqCard = document.createElement("div");
+  const isGroqActive = activeProviderId === "groq";
+  groqCard.className = `provider-card ${isGroqActive ? 'active-provider' : ''}`;
+  groqCard.innerHTML = `
+    <div class="provider-card-info">
+      <div class="provider-card-header">
+        <span class="provider-card-name">Groq</span>
+        <span class="provider-badge builtin">Built-in</span>
+        ${isGroqActive ? '<span class="provider-badge active">Active</span>' : ''}
+      </div>
+      <div class="provider-card-url">${escapeHtml(GROQ_URL)}</div>
+      <div class="provider-card-meta">
+        <span>Model: <span class="provider-card-model">${escapeHtml(selectedModel || DEFAULT_MODEL)}</span></span>
+      </div>
+    </div>
+    <div class="provider-card-actions">
+      ${!isGroqActive ? `
+        <button class="primary-btn activate-prov-btn" style="padding: 4px 10px; font-size: 11px;" title="Use Groq">
+          Activate
+        </button>
+      ` : ''}
+    </div>
+  `;
+  if (!isGroqActive) {
+    const actBtn = groqCard.querySelector(".activate-prov-btn");
+    if (actBtn) actBtn.addEventListener("click", () => switchProvider("groq"));
+  }
+  providersListContainer.appendChild(groqCard);
+
+  // 2. OpenCode Zen Built-in Card
+  const isOpenCodeActive = activeProviderId === "opencode";
+  const opencodeCard = document.createElement("div");
+  opencodeCard.className = `provider-card ${isOpenCodeActive ? 'active-provider' : ''}`;
+  opencodeCard.innerHTML = `
+    <div class="provider-card-info">
+      <div class="provider-card-header">
+        <span class="provider-card-name">OpenCode Zen</span>
+        <span class="provider-badge builtin">Built-in</span>
+        ${isOpenCodeActive ? '<span class="provider-badge active">Active</span>' : ''}
+      </div>
+      <div class="provider-card-url">${escapeHtml(OPENCODE_URL)}</div>
+      <div class="provider-card-meta">
+        <span>Model: <span class="provider-card-model">${escapeHtml(opencodeSelectedModel || DEFAULT_OPENCODE_MODEL)}</span></span>
+        <span>•</span>
+        <span>Free Models Included</span>
+      </div>
+    </div>
+    <div class="provider-card-actions">
+      ${!isOpenCodeActive ? `
+        <button class="primary-btn activate-prov-btn" style="padding: 4px 10px; font-size: 11px;" title="Use OpenCode Zen">
+          Activate
+        </button>
+      ` : ''}
+    </div>
+  `;
+  if (!isOpenCodeActive) {
+    const actBtn = opencodeCard.querySelector(".activate-prov-btn");
+    if (actBtn) actBtn.addEventListener("click", () => switchProvider("opencode"));
+  }
+  providersListContainer.appendChild(opencodeCard);
+
+  // 2. Custom Providers
+  customProviders.forEach(p => {
+    const isActive = p.id === activeProviderId;
+    const isEditing = p.id === editingProviderId;
+    const card = document.createElement("div");
+    card.className = `provider-card ${isActive ? 'active-provider' : ''} ${isEditing ? 'editing-provider' : ''}`;
+    const keysCount = Array.isArray(p.apiKeys) ? p.apiKeys.length : (p.apiKey ? 1 : 0);
+    const keyInfo = keysCount > 0 ? `${keysCount} key(s)` : "No key (Local)";
+
+    card.innerHTML = `
+      <div class="provider-card-info">
+        <div class="provider-card-header">
+          <span class="provider-card-name">${escapeHtml(p.name)}</span>
+          ${isEditing ? '<span class="provider-badge editing">Editing</span>' : (isActive ? '<span class="provider-badge active">Active</span>' : '<span class="provider-badge ready">Ready</span>')}
+        </div>
+        <div class="provider-card-url" title="${escapeHtml(p.url)}">${escapeHtml(p.url)}</div>
+        <div class="provider-card-meta">
+          <span>Model: <span class="provider-card-model">${escapeHtml(p.model)}</span></span>
+          <span>•</span>
+          <span>${keyInfo}</span>
+        </div>
+      </div>
+      <div class="provider-card-actions">
+        ${!isActive ? `
+          <button class="primary-btn activate-prov-btn" style="padding: 4px 10px; font-size: 11px;" title="Use ${escapeHtml(p.name)}">
+            <span class="material-symbols-rounded" style="font-size: 14px;">check_circle</span> Activate
+          </button>
+        ` : ''}
+        <button class="text-btn edit-prov-btn" title="Edit Provider settings">
+          <span class="material-symbols-rounded" style="font-size: 15px;">edit</span> Edit
+        </button>
+        <button class="danger-text-btn delete-prov-btn" title="Delete Provider">
+          <span class="material-symbols-rounded" style="font-size: 15px;">delete</span> Delete
+        </button>
+      </div>
+    `;
+
+    if (!isActive) {
+      const actBtn = card.querySelector(".activate-prov-btn");
+      if (actBtn) actBtn.addEventListener("click", () => switchProvider(p.id));
+    }
+
+    const editBtn = card.querySelector(".edit-prov-btn");
+    if (editBtn) editBtn.addEventListener("click", () => startEditingProvider(p));
+
+    const delBtn = card.querySelector(".delete-prov-btn");
+    if (delBtn) delBtn.addEventListener("click", () => deleteProvider(p.id));
+
+    providersListContainer.appendChild(card);
+  });
+}
+
+function resetProviderForm() {
+  editingProviderId = null;
+  if (providerFormTitle) providerFormTitle.textContent = "Add Custom Provider";
+  if (saveProviderBtnText) saveProviderBtnText.textContent = "Save & Activate";
+  if (cancelEditProviderBtn) cancelEditProviderBtn.style.display = "none";
+  if (provNameInput) provNameInput.value = "";
+  if (provUrlInput) provUrlInput.value = "";
+  if (provKeyInput) provKeyInput.value = "";
+  if (provModelInput) provModelInput.value = "";
+  if (providerFeedback) {
+    providerFeedback.textContent = "";
+    providerFeedback.className = "feedback-msg";
+  }
+  renderProvidersList();
+}
+
+function startEditingProvider(prov) {
+  editingProviderId = prov.id;
+  if (providerFormTitle) providerFormTitle.textContent = `Edit Provider: ${prov.name}`;
+  if (saveProviderBtnText) saveProviderBtnText.textContent = "Update Provider";
+  if (cancelEditProviderBtn) cancelEditProviderBtn.style.display = "inline-flex";
+  if (provNameInput) provNameInput.value = prov.name;
+  if (provUrlInput) provUrlInput.value = prov.url;
+  if (provKeyInput) provKeyInput.value = (prov.apiKeys || []).join(", ");
+  if (provModelInput) provModelInput.value = prov.model;
+  if (providerFeedback) {
+    providerFeedback.textContent = `Editing "${prov.name}". Make your changes and click Update Provider.`;
+    providerFeedback.className = "feedback-msg success";
+  }
+  
+  // Smooth scroll form into view
+  const modalBody = providerModalOverlay?.querySelector('.modal-body');
+  if (modalBody) {
+    modalBody.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  if (provNameInput) provNameInput.focus();
+  renderProvidersList();
+}
+
+async function handleSaveProvider() {
+  if (providerFeedback) {
+    providerFeedback.textContent = "";
+    providerFeedback.className = "feedback-msg";
+  }
+
+  const name = (provNameInput?.value || "").trim();
+  const rawUrl = (provUrlInput?.value || "").trim();
+  const rawKey = (provKeyInput?.value || "").trim();
+  const model = (provModelInput?.value || "").trim();
+
+  if (!name) {
+    showProviderFeedback("Please provide a Provider Name.", "error");
+    if (provNameInput) provNameInput.focus();
+    return;
+  }
+  if (!rawUrl) {
+    showProviderFeedback("Please provide an API Endpoint URL.", "error");
+    if (provUrlInput) provUrlInput.focus();
+    return;
+  }
+  if (!model) {
+    showProviderFeedback("Please provide a Model ID.", "error");
+    if (provModelInput) provModelInput.focus();
+    return;
+  }
+
+  const normalizedUrl = normalizeEndpointUrl(rawUrl);
+  const parsedKeys = rawKey
+    ? rawKey.split(/[\r\n,;]+/).map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
+    : [];
+
+  if (editingProviderId) {
+    const idx = customProviders.findIndex(p => p.id === editingProviderId);
+    if (idx !== -1) {
+      customProviders[idx].name = name;
+      customProviders[idx].url = normalizedUrl;
+      customProviders[idx].model = model;
+      customProviders[idx].apiKeys = parsedKeys;
+    }
+    await saveProvidersToStorage();
+    if (activeProviderId === editingProviderId) {
+      await loadKeys();
+      await loadModel();
+    }
+    showProviderFeedback(`Updated "${name}" successfully!`, "success");
+    resetProviderForm();
+    addLog("info", "provider", `Updated saved provider: ${name} (${model})`);
+  } else {
+    const newProv = {
+      id: "prov_" + Date.now(),
+      name,
+      url: normalizedUrl,
+      model,
+      apiKeys: parsedKeys
+    };
+    customProviders.push(newProv);
+    activeProviderId = newProv.id;
+    await saveProvidersToStorage();
+    await loadKeys();
+    await loadModel();
+    showProviderFeedback(`Saved and activated "${name}"!`, "success");
+    resetProviderForm();
+    addLog("info", "provider", `Configured new custom provider: ${name} (${model})`);
+  }
+
+  renderProviderSelect();
+  renderProvidersList();
+  triggerProviderStatusCheck();
+}
+
+function showProviderFeedback(msg, type = "success") {
+  if (!providerFeedback) return;
+  providerFeedback.textContent = msg;
+  providerFeedback.className = `feedback-msg ${type}`;
+}
+
+async function deleteProvider(id) {
+  const prov = customProviders.find(p => p.id === id);
+  if (!prov) return;
+  if (!confirm(`Are you sure you want to delete provider "${prov.name}"?`)) return;
+
+  customProviders = customProviders.filter(p => p.id !== id);
+  if (activeProviderId === id) {
+    activeProviderId = "groq";
+  }
+  if (editingProviderId === id) {
+    resetProviderForm();
+  }
+
+  await saveProvidersToStorage();
+  await loadKeys();
+  await loadModel();
+  renderProviderSelect();
+  renderProvidersList();
+  triggerProviderStatusCheck();
+  addLog("info", "provider", `Deleted provider: ${prov.name}`);
+}
+
+async function clearAllCustomProviders() {
+  if (customProviders.length === 0) {
+    alert("No custom providers saved to delete.");
+    return;
+  }
+  if (!confirm("Are you sure you want to delete ALL custom providers?")) return;
+
+  customProviders = [];
+  activeProviderId = "groq";
+  resetProviderForm();
+
+  await saveProvidersToStorage();
+  await loadKeys();
+  await loadModel();
+  renderProviderSelect();
+  renderProvidersList();
+  triggerProviderStatusCheck();
+  addLog("info", "provider", "Cleared all custom providers. Reset active provider to Groq.");
+}
+// ── Model state & management ──────────────────────────────────────────────────
+function restoreGroqModelOptions() {
+  if (!modelSelect) return;
+  modelSelect.innerHTML = `
+    <optgroup label="Production Models">
+      <option value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile (Recommended)</option>
+      <option value="openai/gpt-oss-120b">GPT-OSS 120B (Reasoning)</option>
+      <option value="openai/gpt-oss-20b">GPT-OSS 20B (Fast)</option>
+      <option value="deepseek-r1-distill-llama-70b">DeepSeek R1 Distill 70B</option>
+    </optgroup>
+    <optgroup label="Fast & Lightweight">
+      <option value="llama-3.1-8b-instant">Llama 3.1 8B Instant</option>
+      <option value="llama-3.2-3b-preview">Llama 3.2 3B</option>
+      <option value="llama-3.2-1b-preview">Llama 3.2 1B</option>
+      <option value="llama-3.2-11b-vision-preview">Llama 3.2 11B Vision</option>
+      <option value="mixtral-8x7b-32768">Mixtral 8x7B</option>
+      <option value="gemma2-9b-it">Gemma 2 9B</option>
+    </optgroup>
+    <optgroup label="Custom">
+      <option value="custom">Custom Model...</option>
+    </optgroup>
+  `;
+}
+
+function restoreOpenCodeModelOptions(modelsList = OPENCODE_FREE_MODELS) {
+  if (!modelSelect) return;
+  const groups = {};
+  modelsList.forEach(m => {
+    const grp = m.group || "Free Models";
+    if (!groups[grp]) groups[grp] = [];
+    groups[grp].push(m);
+  });
+
+  let html = "";
+  for (const [grpName, models] of Object.entries(groups)) {
+    html += `<optgroup label="${escapeHtml(grpName)}">`;
+    models.forEach(m => {
+      html += `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`;
+    });
+    html += `</optgroup>`;
+  }
+  html += `
+    <optgroup label="Custom">
+      <option value="custom">Custom Model...</option>
+    </optgroup>
+  `;
+  modelSelect.innerHTML = html;
+}
+
+async function fetchLiveOpenCodeModels() {
+  if (activeProviderId !== "opencode") return;
+  try {
+    const res = await fetch(OPENCODE_MODELS_URL, { method: "GET" });
+    if (!res.ok) return;
+    const data = await res.json();
+    let rawList = [];
+    if (Array.isArray(data)) rawList = data;
+    else if (data && Array.isArray(data.data)) rawList = data.data;
+
+    if (rawList.length > 0) {
+      const liveModels = rawList.map(m => {
+        const id = typeof m === "string" ? m : (m.id || m.name);
+        const name = typeof m === "object" && m.name ? m.name : id;
+        const isFree = id.toLowerCase().includes("free") || id.toLowerCase().includes("pickle") || id.toLowerCase().includes("bunny");
+        return {
+          id,
+          name: `${name} ${isFree ? '(Free)' : ''}`,
+          group: isFree ? "OpenCode Free Models" : "Available Models"
+        };
+      });
+
+      const combined = [...OPENCODE_FREE_MODELS];
+      liveModels.forEach(lm => {
+        if (!combined.some(b => b.id === lm.id)) {
+          combined.push(lm);
+        }
+      });
+
+      if (activeProviderId === "opencode" && modelSelect) {
+        const currentVal = modelSelect.value;
+        restoreOpenCodeModelOptions(combined);
+        const hasOpt = Array.from(modelSelect.options).some(opt => opt.value === currentVal);
+        if (hasOpt) {
+          modelSelect.value = currentVal;
+        } else if (currentVal === "custom") {
+          modelSelect.value = "custom";
+        }
+      }
+    }
+  } catch (err) {
+    // Silent fallback
+  }
+}
+
+async function loadModel() {
+  if (activeProviderId === "groq") {
+    try {
+      const res = await storage.get(["groq_selected_model", "groq_custom_model"]);
+      const savedModel = res.groq_selected_model || DEFAULT_MODEL;
+      const customModel = res.groq_custom_model || "";
+
+      if (customModelInput && customModel) {
+        customModelInput.value = customModel;
+      }
+
+      selectedModel = savedModel;
+
+      if (modelSelect) {
+        restoreGroqModelOptions();
+        const hasOption = Array.from(modelSelect.options).some(opt => opt.value === savedModel);
+        if (hasOption) {
+          modelSelect.value = savedModel;
+          if (customModelRow) customModelRow.style.display = "none";
+        } else {
+          modelSelect.value = "custom";
+          if (customModelRow) {
+            customModelRow.style.display = "flex";
+            if (customModelInput) customModelInput.value = savedModel;
+          }
+        }
+      }
+    } catch (e) {
+      selectedModel = DEFAULT_MODEL;
+    }
+  } else if (activeProviderId === "opencode") {
+    try {
+      const res = await storage.get(["opencode_selected_model", "opencode_custom_model"]);
+      const savedModel = res.opencode_selected_model || DEFAULT_OPENCODE_MODEL;
+      const customModel = res.opencode_custom_model || "";
+
+      if (customModelInput && customModel) {
+        customModelInput.value = customModel;
+      }
+
+      opencodeSelectedModel = savedModel;
+
+      if (modelSelect) {
+        restoreOpenCodeModelOptions();
+        const hasOption = Array.from(modelSelect.options).some(opt => opt.value === savedModel);
+        if (hasOption) {
+          modelSelect.value = savedModel;
+          if (customModelRow) customModelRow.style.display = "none";
+        } else {
+          modelSelect.value = "custom";
+          if (customModelRow) {
+            customModelRow.style.display = "flex";
+            if (customModelInput) customModelInput.value = savedModel;
+          }
+        }
+      }
+      fetchLiveOpenCodeModels();
+    } catch (e) {
+      opencodeSelectedModel = DEFAULT_OPENCODE_MODEL;
+    }
+  } else {
+    // Custom Provider active
+    const prov = customProviders.find(p => p.id === activeProviderId);
+    const provModel = prov?.model || "custom-model";
+    selectedModel = provModel;
+    if (customModelInput) {
+      customModelInput.value = provModel;
+    }
+    if (modelSelect) {
+      modelSelect.innerHTML = `
+        <optgroup label="${escapeHtml(prov?.name || 'Custom')} Model">
+          <option value="${escapeHtml(provModel)}" selected>${escapeHtml(provModel)}</option>
+        </optgroup>
+        <optgroup label="Options">
+          <option value="custom">Edit Model...</option>
+        </optgroup>
+      `;
+      if (customModelRow) customModelRow.style.display = "none";
+    }
+  }
+}
+
+async function setModel(modelName, isCustom = false) {
+  const cleanName = (modelName || "").trim();
+  if (activeProviderId === "groq") {
+    selectedModel = cleanName || DEFAULT_MODEL;
+    try {
+      const dataToSave = { groq_selected_model: selectedModel };
+      if (isCustom) {
+        dataToSave.groq_custom_model = selectedModel;
+      }
+      await storage.set(dataToSave);
+    } catch (e) {
+      console.error("Failed to save selected model:", e);
+    }
+  } else if (activeProviderId === "opencode") {
+    opencodeSelectedModel = cleanName || DEFAULT_OPENCODE_MODEL;
+    try {
+      const dataToSave = { opencode_selected_model: opencodeSelectedModel };
+      if (isCustom) {
+        dataToSave.opencode_custom_model = opencodeSelectedModel;
+      }
+      await storage.set(dataToSave);
+    } catch (e) {
+      console.error("Failed to save selected OpenCode model:", e);
+    }
+  } else {
+    // Save to custom provider
+    const prov = customProviders.find(p => p.id === activeProviderId);
+    if (prov && cleanName) {
+      prov.model = cleanName;
+      selectedModel = cleanName;
+      await saveProvidersToStorage();
+      renderProviderSelect();
+      renderProvidersList();
+      triggerProviderStatusCheck();
+    }
+  }
+  const activeModelName = activeProviderId === "opencode" ? opencodeSelectedModel : selectedModel;
+  addLog("info", "model", `Active model set to: ${activeModelName}`);
+}
 
 // ── Key rotation & management state ──────────────────────────────────────────
 let apiKeys = [];
@@ -100,27 +984,60 @@ const unmaskedKeyIndices = new Set();
 
 async function loadKeys() {
   try {
-    const res = await chrome.storage.local.get(["groq_api_keys"]);
-    if (res && Array.isArray(res.groq_api_keys) && res.groq_api_keys.length > 0) {
-      const validKeys = res.groq_api_keys
-        .map(k => (typeof k === "string" ? k.trim() : ""))
-        .filter(Boolean);
-      apiKeys = validKeys.map(k => ({ key: k, exhausted: false }));
+    if (activeProviderId === "groq") {
+      const res = await storage.get(["groq_api_keys"]);
+      if (res && Array.isArray(res.groq_api_keys) && res.groq_api_keys.length > 0) {
+        const validKeys = res.groq_api_keys
+          .map(k => (typeof k === "string" ? k.trim() : ""))
+          .filter(Boolean);
+        apiKeys = validKeys.map(k => ({ key: k, exhausted: false }));
+      } else {
+        apiKeys = [];
+      }
+    } else if (activeProviderId === "opencode") {
+      const res = await storage.get(["opencode_api_keys"]);
+      if (res && Array.isArray(res.opencode_api_keys) && res.opencode_api_keys.length > 0) {
+        const validKeys = res.opencode_api_keys
+          .map(k => (typeof k === "string" ? k.trim() : ""))
+          .filter(Boolean);
+        apiKeys = validKeys.map(k => ({ key: k, exhausted: false }));
+      } else {
+        apiKeys = [];
+      }
     } else {
-      apiKeys = [];
+      const prov = customProviders.find(p => p.id === activeProviderId);
+      if (prov && Array.isArray(prov.apiKeys)) {
+        apiKeys = prov.apiKeys
+          .map(k => (typeof k === "string" ? k.trim() : ""))
+          .filter(Boolean)
+          .map(k => ({ key: k, exhausted: false }));
+      } else {
+        apiKeys = [];
+      }
     }
   } catch (e) {
     apiKeys = [];
   }
+  currentKeyIdx = 0;
   updateKeysUI();
 }
 
 async function saveKeysToStorage() {
   const keyStrings = apiKeys.map(k => k.key);
   try {
-    await chrome.storage.local.set({ groq_api_keys: keyStrings });
+    if (activeProviderId === "groq") {
+      await storage.set({ groq_api_keys: keyStrings });
+    } else if (activeProviderId === "opencode") {
+      await storage.set({ opencode_api_keys: keyStrings });
+    } else {
+      const prov = customProviders.find(p => p.id === activeProviderId);
+      if (prov) {
+        prov.apiKeys = keyStrings;
+        await saveProvidersToStorage();
+      }
+    }
   } catch (e) {
-    console.error("Failed to save keys to chrome.storage:", e);
+    console.error("Failed to save keys to storage:", e);
   }
 }
 
@@ -130,7 +1047,18 @@ function updateKeysUI() {
   
   if (keysBadge) keysBadge.textContent = String(total);
   if (modalKeysCountTag) modalKeysCountTag.textContent = `${activeCount} / ${total} active`;
-  
+
+  const prov = getActiveProvider();
+  if (keysModalTitleText) {
+    keysModalTitleText.textContent = `${prov.name} API Keys`;
+  }
+  if (newKeyInput) {
+    newKeyInput.placeholder = `Paste ${prov.name} API Key...`;
+  }
+  if (addKeyLabel) {
+    addKeyLabel.textContent = `Add ${prov.name} API Key`;
+  }
+
   renderKeysList();
 }
 
@@ -145,10 +1073,13 @@ function renderKeysList() {
   keysListContainer.innerHTML = "";
 
   if (apiKeys.length === 0) {
+    const prov = getActiveProvider();
+    const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0|::1/i.test(prov.url);
+    const hint = isLocal ? "Keys are optional for local endpoints." : `Add a ${prov.name} API key manually or import from a .txt file.`;
     keysListContainer.innerHTML = `
       <div class="keys-empty">
         <span class="material-symbols-rounded" style="font-size: 32px; opacity:0.5; display:block; margin-bottom: 8px;">vpn_key_off</span>
-        <div>No API keys present. Add a Groq API key manually or import from a .txt file.</div>
+        <div>No API keys present. ${hint}</div>
       </div>
     `;
     return;
@@ -247,7 +1178,8 @@ async function addKey(rawInput) {
       addKeyFeedback.textContent = `Successfully added ${addedCount} key(s)${dupCount > 0 ? ` (${dupCount} duplicate skipped)` : ''}!`;
       addKeyFeedback.className = "feedback-msg success";
     }
-    addLog("info", "keys", `Added ${addedCount} new API key(s). Total keys: ${apiKeys.length}`);
+    const prov = getActiveProvider();
+    addLog("info", "keys", `Added ${addedCount} new API key(s) for ${prov.name}. Total keys: ${apiKeys.length}`);
   } else if (dupCount > 0) {
     if (addKeyFeedback) {
       addKeyFeedback.textContent = "Key(s) already exist in your list.";
@@ -342,10 +1274,12 @@ function markKeyExhausted() {
 
 // ── Logging ───────────────────────────────────────────────────────────────────
 function addLog(type, label, message) {
+  if (!message || !String(message).trim()) return;
   logEmpty.style.display = "none";
   const entry = document.createElement("div");
   entry.className = `log-entry ${type}`;
-  entry.innerHTML = `<div class="log-dot"></div><div class="log-content"><div class="log-label">${label}</div>${escapeHtml(message)}</div>`;
+  const formattedMsg = escapeHtml(message).replace(/\n/g, "<br>");
+  entry.innerHTML = `<div class="log-dot"></div><div class="log-content"><div class="log-label">${label}</div>${formattedMsg}</div>`;
   logArea.appendChild(entry);
   logArea.scrollTop = logArea.scrollHeight;
 }
@@ -386,14 +1320,21 @@ function addAnswerCard(optionText, isSuccess = true) {
         args: [{ action: "select_radio", params: { text: optionText } }]
       });
       const resultMsg = res?.[0]?.result || "";
+      let isVerified = false;
+      try {
+        const parsed = JSON.parse(resultMsg);
+        isVerified = parsed.verified === true;
+      } catch {
+        isVerified = resultMsg && !resultMsg.includes("NOT_FOUND") && !resultMsg.includes("ERROR");
+      }
       const statusTag = entry.querySelector(".answer-status-tag");
       if (statusTag) {
-        if (resultMsg.includes("NOT_FOUND")) {
-          statusTag.className = "answer-status-tag warning";
-          statusTag.innerHTML = `<span class="material-symbols-rounded" style="font-size:14px;">warning</span> Option not found`;
-        } else {
+        if (isVerified) {
           statusTag.className = "answer-status-tag success";
           statusTag.innerHTML = `<span class="material-symbols-rounded" style="font-size:14px;">check_circle</span> Selected ✓`;
+        } else {
+          statusTag.className = "answer-status-tag warning";
+          statusTag.innerHTML = `<span class="material-symbols-rounded" style="font-size:14px;">warning</span> Selection unconfirmed`;
         }
       }
     }
@@ -402,6 +1343,7 @@ function addAnswerCard(optionText, isSuccess = true) {
 
   logArea.appendChild(entry);
   logArea.scrollTop = logArea.scrollHeight;
+  return entry;
 }
 
 function escapeHtml(s) {
@@ -417,8 +1359,13 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ── Page context ──────────────────────────────────────────────────────────────
 async function getCurrentTab() {
-  const [tab] = await chrome.tabs.query({active:true, currentWindow:true});
-  return tab;
+  try {
+    if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.query) {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      return tab;
+    }
+  } catch (e) {}
+  return { id: 1, url: window.location.href, title: document.title };
 }
 
 async function waitForTabLoad(tabId, maxWait = 5000) {
@@ -439,34 +1386,98 @@ async function getPageSnapshot(tabId) {
       target: {tabId},
       func: () => {
         const radioOptions = [];
+        const seenInputs = new Set();
 
-        // Method 1: labels with for= attribute
-        document.querySelectorAll("label").forEach(lbl => {
-          const forId = lbl.getAttribute("for");
-          const inp = forId ? document.getElementById(forId) : lbl.querySelector("input[type=radio]");
-          if (inp && inp.type === "radio") {
-            radioOptions.push({ value: inp.value, text: lbl.innerText.trim(), checked: inp.checked, id: inp.id || "" });
-          }
-        });
-
-        // Method 2: radios in containers
-        if (radioOptions.length === 0) {
-          document.querySelectorAll("input[type=radio]").forEach(r => {
-            const container = r.closest("li,div,tr,p,span");
-            const text = (container?.innerText || r.value || "").trim();
-            if (text) radioOptions.push({ value: r.value, text, checked: r.checked, id: r.id });
+        function addDetectedOption(text, val, checked, id, idx) {
+          const clean = (text || "").replace(/\s+/g, " ").trim();
+          if (!clean || clean.length > 300) return;
+          radioOptions.push({
+            index: radioOptions.length,
+            value: val || clean,
+            text: clean,
+            checked: !!checked,
+            id: id || ""
           });
         }
 
-        // Method 3: Custom framework options (role=radio, role=option, .option, .choice, etc.)
-        if (radioOptions.length === 0) {
-          const customEls = document.querySelectorAll("[role=radio], [role=option], .option, .choice, .answer-option, .q-option, [class*='option'], [class*='choice']");
-          customEls.forEach(el => {
-            const text = (el.innerText || "").trim();
-            if (text && text.length < 200) {
-              const isChecked = el.getAttribute("aria-checked") === "true" || el.classList.contains("selected") || el.classList.contains("active");
-              radioOptions.push({ value: text, text, checked: isChecked, id: el.id || "" });
+        // 1. Scan standard radio & checkbox inputs
+        const allRadios = [...document.querySelectorAll("input[type=radio], input[type=checkbox]")].filter(r => {
+          if (r.name && /(theme|mode|consent|agree|terms|dark|light)/i.test(r.name)) return false;
+          return true;
+        });
+
+        allRadios.forEach((r, idx) => {
+          if (seenInputs.has(r)) return;
+          seenInputs.add(r);
+
+          let text = "";
+          // Associated label via for=
+          if (r.id) {
+            try {
+              const lbl = document.querySelector(`label[for="${CSS.escape(r.id)}"]`);
+              if (lbl) text = lbl.innerText.trim();
+            } catch(e){}
+          }
+          // Parent label
+          if (!text) {
+            const parentLbl = r.closest("label");
+            if (parentLbl) text = parentLbl.innerText.trim();
+          }
+          // Sibling label or text container
+          if (!text && r.parentElement) {
+            const sibLbl = r.parentElement.querySelector("label");
+            if (sibLbl) text = sibLbl.innerText.trim();
+          }
+          // Closest option container (Angular Material, Bootstrap, PrimeNG, etc.)
+          if (!text) {
+            const container = r.closest("mat-radio-button, .mat-radio-button, .form-check, .custom-control, .option, .choice, [class*='option'], [class*='choice'], [class*='radio'], li, td, tr") || r.parentElement;
+            if (container) {
+              const clone = container.cloneNode(true);
+              clone.querySelectorAll("input, button, script, style").forEach(n => n.remove());
+              text = clone.innerText.trim();
             }
+          }
+          // Fallback to value or aria-label
+          if (!text) {
+            text = r.getAttribute("aria-label") || (r.value && r.value !== "on" ? r.value : "");
+          }
+          // Resilient fallback for math / icon / image options
+          if (!text) {
+            text = `Option ${String.fromCharCode(65 + idx)}`;
+          }
+
+          addDetectedOption(text, r.value, r.checked, r.id, idx);
+        });
+
+        // 2. Scan custom assessment options (Angular, React, Vue, Material, etc.)
+        if (radioOptions.length < 2) {
+          const customSelectors = [
+            "mat-radio-button",
+            ".mat-radio-button",
+            "[role=radio]",
+            "[role=option]",
+            ".p-radiobutton",
+            ".ant-radio-wrapper",
+            ".option",
+            ".choice",
+            ".answer-option",
+            ".q-option",
+            "[class*='option-item']",
+            "[class*='choice-item']",
+            "[data-option]"
+          ];
+          const customEls = [...document.querySelectorAll(customSelectors.join(","))];
+          const leafEls = customEls.filter(el => !customEls.some(other => other !== el && el.contains(other)));
+          leafEls.forEach((el, idx) => {
+            const text = (el.innerText || `Option ${String.fromCharCode(65 + idx)}`).trim();
+            if (!text || text.length > 300) return;
+            const isChecked = el.getAttribute("aria-checked") === "true"
+              || el.classList.contains("selected")
+              || el.classList.contains("active")
+              || el.classList.contains("checked")
+              || el.classList.contains("mat-radio-checked")
+              || !!el.querySelector("input:checked, [aria-checked='true'], .selected, .active, .checked, .mat-radio-checked");
+            addDetectedOption(text, text, isChecked, el.id || "", idx);
           });
         }
 
@@ -534,7 +1545,7 @@ async function getPageSnapshot(tabId) {
 
         return {
           title: document.title, url: location.href,
-          bodyText: bodyText.slice(0, 4000),
+          bodyText: bodyText.slice(0, 2500),
           clickables, radioOptions, questionNumber: qNum
         };
       }
@@ -543,32 +1554,129 @@ async function getPageSnapshot(tabId) {
   } catch { return null; }
 }
 
-// ── Groq API call ─────────────────────────────────────────────────────────────
-async function callGroq(messages, retries = 0) {
+// ── Unified LLM API Call ──────────────────────────────────────────────────────
+async function callLLM(messages, retries = 0, fallbackConfig = {}) {
+  const provider = getActiveProvider();
+  const providerName = provider ? provider.name : "Groq";
+  const endpointUrl = provider ? normalizeEndpointUrl(provider.url) : GROQ_URL;
+  const isGroq = !provider || provider.id === "groq";
+
   const key = getActiveKey();
-  if (!key) throw new Error("No API keys available! Please add a Groq API key manually or import from a .txt file.");
-
-  const res = await fetch(GROQ_URL, {
-    method: "POST",
-    headers: { "Content-Type":"application/json", "Authorization":`Bearer ${key}` },
-    body: JSON.stringify({ model: MODEL, messages, max_tokens: 1500, temperature: 0.1 })
-  });
-
-  if (res.status === 429 || res.status === 401) {
-    markKeyExhausted();
-    if (retries < apiKeys.length) return callGroq(messages, retries + 1);
-    throw new Error("All keys rate-limited. Wait a minute.");
+  const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0|::1/i.test(endpointUrl);
+  if (!key && isGroq) {
+    throw new Error("No API keys available! Please add a Groq API key manually or import from a .txt file.");
   }
-  if (!res.ok) throw new Error(`Groq error: ${res.status}`);
+
+  const modelToUse = (provider && provider.model) ? provider.model : (selectedModel || DEFAULT_MODEL);
+  const payload = {
+    model: modelToUse,
+    messages,
+    temperature: 0.5,
+    max_tokens: 1024,
+    top_p: 0.95
+  };
+
+  // Add reasoning_effort only for supported models on Groq if not in fallback mode
+  const supportsReasoning = isGroq && (modelToUse.includes("qwen") || modelToUse.includes("gpt-oss")) && !fallbackConfig.noReasoning;
+  if (supportsReasoning) {
+    payload.reasoning_effort = "default";
+  }
+
+  const headers = { "Content-Type": "application/json" };
+  if (key) {
+    headers["Authorization"] = `Bearer ${key}`;
+  }
+  if (endpointUrl.includes("openrouter.ai")) {
+    headers["HTTP-Referer"] = "https://github.com/infernoGurala/Luna-CRT";
+    headers["X-Title"] = "Luna cool girl";
+  }
+
+  let res;
+  try {
+    res = await fetch(endpointUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload)
+    });
+  } catch (networkErr) {
+    throw new Error(`Network error connecting to ${providerName} (${endpointUrl}): ${networkErr.message}`);
+  }
+
+  // Handle 401 Unauthorized (Invalid / Revoked API Key)
+  if (res.status === 401) {
+    let authDetail = "Invalid API Key or unauthorized";
+    try {
+      const errJson = await res.json();
+      if (errJson?.error?.message) authDetail = errJson.error.message;
+    } catch {}
+    
+    addLog("error", "auth", `⚠️ ${providerName} Key #${currentKeyIdx + 1} rejected (401): ${authDetail}`);
+    if (apiKeys.length > 0) markKeyExhausted();
+    
+    if (apiKeys.length > 1 && retries < apiKeys.length - 1) {
+      await sleep(300);
+      return callLLM(messages, retries + 1, fallbackConfig);
+    }
+    const consoleHelp = isGroq
+      ? "in Groq Console (console.groq.com/keys)"
+      : (provider && provider.id === "opencode" ? "in OpenCode Zen Console (opencode.ai/zen)" : `for ${providerName}`);
+    throw new Error(`All API keys failed authentication (401). Please verify your keys ${consoleHelp}.`);
+  }
+
+  // Handle 429 Rate Limit (RPM / TPM exceeded)
+  if (res.status === 429) {
+    let rateDetail = "Rate limit reached (429)";
+    try {
+      const errJson = await res.json();
+      if (errJson?.error?.message) rateDetail = errJson.error.message;
+    } catch {}
+
+    addLog("info", "rate-limit", `⏳ ${providerName} Key #${currentKeyIdx + 1} rate-limited: ${rateDetail}`);
+    if (apiKeys.length > 0) markKeyExhausted();
+
+    if (apiKeys.length > 1 && retries < apiKeys.length - 1) {
+      // Delay 1.5s before rotating to avoid burst rate limiting
+      await sleep(1500);
+      return callLLM(messages, retries + 1, fallbackConfig);
+    }
+    throw new Error(`${providerName} rate limit exceeded: ${rateDetail}\nPlease wait a few moments before continuing.`);
+  }
+
+  // Handle other HTTP errors (400, 404, 500, etc.)
+  if (!res.ok) {
+    let errDetail = `HTTP ${res.status}`;
+    let errJson = null;
+    try {
+      errJson = await res.json();
+      if (errJson?.error?.message) {
+        errDetail = `${res.status} - ${errJson.error.message}`;
+      } else if (errJson?.message) {
+        errDetail = `${res.status} - ${errJson.message}`;
+      }
+    } catch {}
+
+    // Graceful fallback if a model rejects reasoning_effort
+    if (!fallbackConfig.noReasoning && payload.reasoning_effort && errDetail.toLowerCase().includes("reasoning_effort")) {
+      return callLLM(messages, retries, { ...fallbackConfig, noReasoning: true });
+    }
+
+    throw new Error(`${providerName} error: ${errDetail}`);
+  }
+
   const data = await res.json();
-  return data.choices[0].message.content;
+  const choice = data?.choices?.[0]?.message?.content;
+  if (!choice) {
+    throw new Error(`${providerName} returned an empty response.`);
+  }
+  return choice;
 }
+const callGroq = callLLM;
 
 // ── System prompt ─────────────────────────────────────────────────────────────
 function buildPrompt(snap) {
   const optStr = (snap?.radioOptions || []).length > 0
-    ? "\nMCQ OPTIONS — use EXACTLY these texts for select_radio:\n" +
-      snap.radioOptions.map((o, i) => `  ${String.fromCharCode(65+i)}) "${o.text}"${o.checked ? " ← currently selected" : ""}`).join("\n")
+    ? "\nMCQ OPTIONS:\n" +
+      snap.radioOptions.map((o, i) => `  [${String.fromCharCode(65+i)}] "${o.text}"${o.checked ? " ← currently selected" : ""}`).join("\n")
     : "\n(No radio options detected)";
 
   return `You are an expert browser automation agent that answers MCQ questions in strict sequential order.
@@ -586,17 +1694,12 @@ ${snap?.bodyText || "(restricted page)"}
 ━━━ RESPONSE FORMAT ━━━
 Respond ONLY in this exact format:
 <response>
-<thinking>
-1. Carefully analyze the question and context.
-2. Work through the problem step-by-step. Show all logical deductions or calculations.
-3. Double-check your reasoning before concluding.
-</thinking>
-Final conclusion: (brief summary of the answer)
+Brief, concise summary of your answer or reasoning.
 </response>
 <actions>[{"action":"ACTION","params":{}}]</actions>
 
 ━━━ ACTIONS ━━━
-- select_radio: {"text":"EXACT_OPTION_TEXT"}
+- select_radio: {"option":"A", "text":"EXACT_OPTION_TEXT"}
 - click_next: {}   ← ONLY use this to move to the NEXT question (NEVER submit)
 - click: {"selector":"text:BUTTON_TEXT"}
 - click_xy: {"x":NUMBER,"y":NUMBER}
@@ -607,7 +1710,8 @@ Final conclusion: (brief summary of the answer)
 
 ━━━ STRICT RULES ━━━
 1. Answer questions ONE BY ONE in sequential order — do NOT skip any question.
-2. For MCQ: ALWAYS output EXACTLY [select_radio({"text":"..."}), click_next({})]
+2. For MCQ: ALWAYS output EXACTLY [select_radio({"option":"A", "text":"..."}), click_next({})]
+   - Specify BOTH "option" ("A", "B", "C", "D") AND the exact option "text".
 3. NEVER use click_next if a SUBMIT button is visible — use none:{} instead.
 4. NEVER click any button labeled Submit, Finish, or End Test.
 5. Use EXACT option text from MCQ OPTIONS above — do not paraphrase.
@@ -617,18 +1721,40 @@ Final conclusion: (brief summary of the answer)
 9. NEVER output scroll actions — DO NOT SCROLL THE PAGE.`;
 }
 
+function cleanReasoningText(rawText) {
+  if (!rawText) return "";
+  let clean = rawText.trim();
+
+  // Strip prompt template boilerplate instructions
+  clean = clean.replace(/1\.\s*Carefully analyze the question[\s\S]*?3\.\s*Double-check your reasoning before concluding\./gi, "");
+  clean = clean.replace(/1\.\s*The user requested to[\s\S]*?3\.\s*According to the allowed actions[\s\S]*?\./gi, "");
+  clean = clean.replace(/^Final conclusion:\s*/i, "");
+
+  // Remove XML tags & raw action arrays if any leaked into text
+  clean = clean.replace(/<\/?(thinking|response|actions)>/gi, "");
+  clean = clean.replace(/\[\s*\{[\s\S]*?"action"[\s\S]*?\}\s*\]/g, "");
+
+  return clean.trim();
+}
+
 function parseAI(raw) {
-  const tM = raw.match(/<thinking>([\s\S]*?)<\/thinking>/);
-  const rM = raw.match(/<response>([\s\S]*?)<\/response>/);
-  const aM = raw.match(/<actions>([\s\S]*?)<\/actions>/);
-  
-  // Extract a brief summary of the thinking to log
-  let text = "Analyzing question and executing...";
-  if (tM) {
-    text = tM[1].trim().slice(0, 150).replace(/\n/g, ' ') + "...";
-  } else if (rM) {
-    text = rM[1].trim().slice(0, 150).replace(/\n/g, ' ') + "...";
+  if (!raw) return { text: "", actions: [] };
+
+  const rM = raw.match(/<response>([\s\S]*?)<\/response>/i);
+  const tM = raw.match(/<thinking>([\s\S]*?)<\/thinking>/i);
+  const aM = raw.match(/<actions>([\s\S]*?)<\/actions>/i);
+
+  let rawText = "";
+  if (rM) {
+    rawText = rM[1];
+  } else if (tM) {
+    rawText = tM[1];
+  } else {
+    rawText = raw.replace(/<actions>[\s\S]*?<\/actions>/gi, "");
   }
+
+  const cleanText = cleanReasoningText(rawText);
+
   let actions = [];
   if (aM) {
     try { actions = JSON.parse(aM[1].trim()); } catch {
@@ -636,7 +1762,37 @@ function parseAI(raw) {
       if (arrM) { try { actions = JSON.parse(arrM[0]); } catch {} }
     }
   }
-  return { text, actions };
+
+  // Fallback 1: Markdown code block containing JSON array
+  if (actions.length === 0) {
+    const codeBlockM = raw.match(/```(?:json)?\s*(\[\s*\{[\s\S]*?\}\s*\])\s*```/i);
+    if (codeBlockM) {
+      try { actions = JSON.parse(codeBlockM[1].trim()); } catch {}
+    }
+  }
+
+  // Fallback 2: Any raw JSON array with "action"
+  if (actions.length === 0) {
+    const jsonArrM = raw.match(/\[\s*\{[\s\S]*?"action"[\s\S]*?\}\s*\]/);
+    if (jsonArrM) {
+      try { actions = JSON.parse(jsonArrM[0]); } catch {}
+    }
+  }
+
+  // Fallback 3: Infer option letter from text conclusion if AI didn't format action tags
+  if (actions.length === 0) {
+    const letterMatch = raw.match(/(?:correct\s+(?:option|answer)|conclusion|answer|option)\s*(?:is|:)?\s*[\(\[]?([A-E])[\)\]]?/i)
+                     || raw.match(/\b([A-E])\s*(?:is\s+the\s+correct\s+answer|is\s+correct)\b/i);
+    if (letterMatch) {
+      const optLetter = letterMatch[1].toUpperCase();
+      actions = [
+        { action: "select_radio", params: { option: optLetter, text: optLetter } },
+        { action: "click_next" }
+      ];
+    }
+  }
+
+  return { text: cleanText, actions };
 }
 
 // ── Execute actions ───────────────────────────────────────────────────────────
@@ -645,16 +1801,80 @@ async function executeActions(tabId, actions) {
     if (a.action === "none" || a.action === "scroll") continue;
 
     if (a.action === "select_radio") {
-      const optionText = a.params?.text || "";
+      const optionText = a.params?.text || a.params?.option || "";
       let res = "";
       try {
         const r = await chrome.scripting.executeScript({ target: { tabId }, func: runAction, args: [a] });
         res = r?.[0]?.result || "";
       } catch (e) {
-        res = "ERROR: " + e.message;
+        res = JSON.stringify({ success: false, verified: false, error: e.message });
       }
-      const isSuccess = res && !res.includes("NOT_FOUND") && !res.includes("ERROR");
-      addAnswerCard(optionText, isSuccess);
+
+      let parsed = null;
+      try { parsed = JSON.parse(res); } catch {}
+
+      let isVerified = parsed?.verified === true;
+      let isSuccess = parsed ? (parsed.success && parsed.verified) : (res && !res.includes("NOT_FOUND") && !res.includes("ERROR"));
+
+      const cardEl = addAnswerCard(parsed?.text || optionText, isVerified || isSuccess);
+
+      if (!isVerified) {
+        addLog("info", "warn", `⚠️ Option "${optionText}" unconfirmed on first pass — retrying...`);
+        await sleep(350);
+        try {
+          const r2 = await chrome.scripting.executeScript({ target: { tabId }, func: runAction, args: [a] });
+          const res2 = r2?.[0]?.result || "";
+          try {
+            const p2 = JSON.parse(res2);
+            if (p2?.verified) {
+              isVerified = true;
+              isSuccess = true;
+              const tag = cardEl?.querySelector?.(".answer-status-tag");
+              if (tag) {
+                tag.className = "answer-status-tag success";
+                tag.innerHTML = `<span class="material-symbols-rounded" style="font-size:14px;">check_circle</span> Auto-selected`;
+              }
+            }
+          } catch(e){}
+        } catch(e){}
+      }
+
+      // Dwell 800ms for web portal component state & auto-save to persist
+      await sleep(800);
+    } else if (a.action === "click_next") {
+      // Safety: Ensure an answer is checked in the DOM before advancing
+      try {
+        const checkRes = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            const hasAnySelected = () => {
+              if (document.querySelector("input[type=radio]:checked, input[type=checkbox]:checked")) return true;
+              if (document.querySelector("[role=radio][aria-checked='true'], [role=option][aria-selected='true']")) return true;
+              if (document.querySelector(".mat-radio-checked, .ant-radio-checked, .p-radiobutton-checked")) return true;
+              if (document.querySelector(".option.selected, .option.active, .choice.selected, .choice.active")) return true;
+              return false;
+            };
+            const hasOptions = document.querySelectorAll("input[type=radio], [role=radio], .mat-radio-button, .option, .choice").length > 0;
+            return { hasOptions, selected: hasAnySelected() };
+          }
+        });
+        const state = checkRes?.[0]?.result;
+        if (state?.hasOptions && !state?.selected) {
+          addLog("info", "warn", "⚠️ Answer unconfirmed before Next — enforcing selection now...");
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            func: runAction,
+            args: [{ action: "select_radio", params: { option: "A", index: 0 } }]
+          });
+          await sleep(500);
+        }
+      } catch(e){}
+
+      addLog("action", "→", `click_next()`);
+      try {
+        await chrome.scripting.executeScript({ target: { tabId }, func: runAction, args: [a] });
+      } catch (e) { addLog("error", "fail", e.message); }
+      await sleep(1500);
     } else {
       addLog("action", "→", `${a.action}(${JSON.stringify(a.params)})`);
       try {
@@ -668,9 +1888,8 @@ async function executeActions(tabId, actions) {
           await chrome.scripting.executeScript({ target: { tabId }, func: runAction, args: [a] });
         }
       } catch (e) { addLog("error", "fail", e.message); }
+      await sleep(400);
     }
-    const isNav = a.action === "click_next" || a.action === "navigate" || a.action === "go_back";
-    await sleep(isNav ? 1500 : 400);
   }
 }
 
@@ -692,32 +1911,41 @@ function runAction({action, params}) {
 
   function robustClick(el) {
     if (!el) return false;
-    // Page scrolling disabled
+    const clickProps = { bubbles: true, cancelable: true, view: window, buttons: 1, button: 0 };
     if (el.tagName === "LABEL") {
       const forId = el.getAttribute("for");
-      const input = forId ? document.getElementById(forId) : el.querySelector("input[type=radio],input[type=checkbox]");
+      const input = forId ? document.getElementById(forId) : (el.querySelector("input[type=radio],input[type=checkbox]") || el.parentElement?.querySelector("input[type=radio],input[type=checkbox]"));
       if (input) {
-        input.checked = true;
-        ["mousedown","mouseup","click"].forEach(t => input.dispatchEvent(new MouseEvent(t, {bubbles:true})));
+        try {
+          const nativeSet = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked')?.set;
+          if (nativeSet) nativeSet.call(input, true);
+          else input.checked = true;
+        } catch(e) { input.checked = true; }
+        ["pointerdown","mousedown","pointerup","mouseup","click"].forEach(t => input.dispatchEvent(new MouseEvent(t, clickProps)));
+        input.dispatchEvent(new Event("input", {bubbles:true}));
         input.dispatchEvent(new Event("change", {bubbles:true}));
-        el.dispatchEvent(new MouseEvent("click", {bubbles:true}));
+        el.dispatchEvent(new MouseEvent("click", clickProps));
         return true;
       }
     }
     if (el.type === "radio" || el.type === "checkbox") {
-      el.checked = true;
-      ["mousedown","mouseup","click"].forEach(t => el.dispatchEvent(new MouseEvent(t, {bubbles:true})));
+      try {
+        const nativeSet = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked')?.set;
+        if (nativeSet) nativeSet.call(el, true);
+        else el.checked = true;
+      } catch(e) { el.checked = true; }
+      ["pointerdown","mousedown","pointerup","mouseup","click"].forEach(t => el.dispatchEvent(new MouseEvent(t, clickProps)));
+      el.dispatchEvent(new Event("input", {bubbles:true}));
       el.dispatchEvent(new Event("change", {bubbles:true}));
       return true;
     }
-    ["mousedown","mouseup"].forEach(t => el.dispatchEvent(new MouseEvent(t, {bubbles:true, cancelable:true})));
-    el.click();
+    ["pointerdown","mousedown","pointerup","mouseup"].forEach(t => el.dispatchEvent(new MouseEvent(t, clickProps)));
+    try { el.click(); } catch(e){}
     return true;
   }
 
   switch(action) {
     case "scroll":
-      // Page scrolling disabled per user preference
       break;
 
     case "click": {
@@ -728,20 +1956,69 @@ function runAction({action, params}) {
     }
 
     case "click_next": {
+      // Cooldown / debounce guard: prevent duplicate executions within 1000ms
+      const now = Date.now();
+      if (window.__lastNextClickTime && (now - window.__lastNextClickTime < 1000)) {
+        return "DEBOUNCED: Advance already in progress";
+      }
+
+      // Helper to check if an option is currently selected
+      const hasAnySelected = () => {
+        if (document.querySelector("input[type=radio]:checked, input[type=checkbox]:checked")) return true;
+        if (document.querySelector("[role=radio][aria-checked='true'], [role=option][aria-selected='true']")) return true;
+        if (document.querySelector(".mat-radio-checked, .ant-radio-checked, .p-radiobutton-checked")) return true;
+        if (document.querySelector(".option.selected, .option.active, .choice.selected, .choice.active")) return true;
+        return false;
+      };
+
+      const hasOptions = document.querySelectorAll("input[type=radio], [role=radio], .mat-radio-button, .option, .choice").length > 0;
+      if (hasOptions && !hasAnySelected()) {
+        return "BLOCKED: No option selected yet. Answer must be selected before advancing.";
+      }
+
       const allBtns = [...document.querySelectorAll("a, button, input[type=submit], input[type=button], [role=button]")];
       // HARDCODED: Never click Submit/Finish/End buttons
       const isSubmit = el => /(submit|finish|end test|end quiz|done)/i.test((el.innerText || el.value || "").trim());
-      const eligible = allBtns.filter(el => !isSubmit(el));
-      let btn = eligible.find(el => /next/i.test(el.innerText || el.value || ""))
-             || eligible.find(el => /→|>|»/.test(el.innerText || ""));
+      const eligible = allBtns.filter(el => !isSubmit(el) && !el.disabled && el.getAttribute("aria-disabled") !== "true" && el.offsetParent !== null);
+
+      // STRICT EXCLUSIVITY: Pick EXACTLY ONE button to advance
+      // Priority 1: Save & Next / Save and Next / Save & Proceed / Save & Continue
+      let btn = eligible.find(el => /(save\s*(&|and|\+)?\s*(next|proceed|continue)|save\s+next)/i.test((el.innerText || el.value || "").trim()));
+
+      // Priority 2: Next Question / Next / Continue / Proceed / Forward Arrow
+      if (!btn) {
+        btn = eligible.find(el => /\bnext\s*(question)?\b/i.test((el.innerText || el.value || "").trim()))
+           || eligible.find(el => /\b(continue|proceed)\b/i.test((el.innerText || el.value || "").trim()))
+           || eligible.find(el => /next/i.test((el.innerText || el.value || "").trim()))
+           || eligible.find(el => /→|>|»/.test((el.innerText || "").trim()));
+      }
+
+      // Priority 3: Standalone Save (only if no Next button of any kind exists)
+      if (!btn) {
+        btn = eligible.find(el => /^\s*save\s*$/i.test((el.innerText || el.value || "").trim()));
+      }
+
       if (btn) {
-        // Page scrolling disabled
-        ["mousedown","mouseup"].forEach(t => btn.dispatchEvent(new MouseEvent(t, {bubbles:true, cancelable:true})));
-        btn.click();
-        if (btn.tagName === "A" && btn.href && !btn.href.startsWith("javascript")) {
-          window.location.href = btn.href;
+        window.__lastNextClickTime = now;
+        try { btn.scrollIntoView?.({ block: "nearest", inline: "nearest" }); } catch(e){}
+
+        const clickProps = { bubbles: true, cancelable: true, view: window, buttons: 1, button: 0 };
+        // Dispatch mouse preparation events — DO NOT dispatch "click" in the array!
+        ["pointerdown", "mousedown", "pointerup", "mouseup"].forEach(t => {
+          try { btn.dispatchEvent(new MouseEvent(t, clickProps)); } catch(e){}
+        });
+
+        // Exactly ONE click invocation
+        let clicked = false;
+        try {
+          btn.click();
+          clicked = true;
+        } catch(e) {}
+        if (!clicked) {
+          try { btn.dispatchEvent(new MouseEvent("click", clickProps)); } catch(e){}
         }
-        return "clicked: " + (btn.innerText || btn.value || "button");
+
+        return "clicked: " + (btn.innerText || btn.value || "button").trim();
       }
       return "NOT_FOUND: next button (Submit blocked)";
     }
@@ -753,98 +2030,283 @@ function runAction({action, params}) {
     }
 
     case "select_radio": {
-      const targetText = (params.text || "").trim();
-      const lowerTarget = targetText.toLowerCase();
+      // 1. Parse option letter index from params.option, params.index, or params.text
+      let targetIdx = -1;
+      if (params.option) {
+        const oStr = String(params.option).trim().toUpperCase();
+        const m = oStr.match(/\b([A-E])\b/) || oStr.match(/^[A-E]$/);
+        if (m) targetIdx = m[1].charCodeAt(0) - 65;
+        else if (/^[1-5]$/.test(oStr)) targetIdx = parseInt(oStr) - 1;
+      }
+      if (targetIdx === -1 && params.index !== undefined && Number.isInteger(params.index)) {
+        targetIdx = params.index;
+      }
+
+      const rawText = String(params.text || "").trim();
+      const rawTarget = (rawText || (params.option ? String(params.option) : "")).trim();
+      const lowerTarget = rawTarget.toLowerCase();
+
+      if (targetIdx === -1) {
+        const letterMatch = lowerTarget.match(/^(?:option\s+)?\(?([a-e])\)?(?:\s*[\.\:\-\)]|\s+|$)/i);
+        if (letterMatch) {
+          targetIdx = letterMatch[1].toLowerCase().charCodeAt(0) - 97;
+        } else if (/^[a-e]$/i.test(lowerTarget)) {
+          targetIdx = lowerTarget.charCodeAt(0) - 97;
+        }
+      }
 
       // Core text without leading Option letters like "A)", "A.", "(A)", "1)", "Option A:"
-      const coreTarget = lowerTarget.replace(/^(?:[a-d0-9][\.\)\:\-]\s*|\([a-d0-9]\)\s*|option\s+[a-d0-9][\:\.\s]*)/i, "").trim();
+      const coreTarget = lowerTarget
+        .replace(/^(?:option\s+)?\(?[a-e0-9]\)?(?:\s*[\.\:\-\)]\s*|\s+)/i, "")
+        .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+        .trim();
 
-      // Extract option letter index if present (A=0, B=1, C=2, D=3, E=4)
-      const letterMatch = lowerTarget.match(/^(?:([a-e])[\.\)\:]|\(([a-e])\)|option\s+([a-e]))/i);
-      const targetIdx = letterMatch ? (letterMatch[1] || letterMatch[2] || letterMatch[3]).toLowerCase().charCodeAt(0) - 97 : -1;
+      // Discover all candidate options on the page
+      const candidates = [];
+      const seenNodes = new Set();
 
-      // Helper function to trigger selection safely across Vanilla & Frameworks (React, Vue, Angular, etc.)
-      function selectEl(el, inputEl) {
-        if (!el && !inputEl) return false;
-        if (inputEl) {
+      // 1. Scan standard radios & checkboxes
+      const allRadios = [...document.querySelectorAll("input[type=radio], input[type=checkbox]")].filter(r => {
+        if (r.name && /(theme|mode|consent|agree|terms|dark|light)/i.test(r.name)) return false;
+        return true;
+      });
+
+      allRadios.forEach((r, idx) => {
+        let lbl = null;
+        if (r.id) {
+          try { lbl = document.querySelector(`label[for="${CSS.escape(r.id)}"]`); } catch(e){}
+        }
+        if (!lbl) lbl = r.closest("label");
+        if (!lbl && r.parentElement) lbl = r.parentElement.querySelector("label");
+        const container = r.closest("mat-radio-button, .mat-radio-button, .form-check, .custom-control, .option, .choice, [class*='option'], [class*='choice'], [class*='radio'], li, td, tr") || r.closest("label") || r.parentElement;
+
+        let txt = (lbl?.innerText || "").trim();
+        if (!txt && container) {
+          const clone = container.cloneNode(true);
+          clone.querySelectorAll("input, button, script, style").forEach(n => n.remove());
+          txt = clone.innerText.trim();
+        }
+        if (!txt) txt = r.getAttribute("aria-label") || (r.value && r.value !== "on" ? r.value : "");
+
+        seenNodes.add(r);
+        if (container) seenNodes.add(container);
+        if (lbl) seenNodes.add(lbl);
+        candidates.push({ input: r, label: lbl, container: container || lbl || r, text: txt || `Option ${String.fromCharCode(65 + idx)}`, idx });
+      });
+
+      // 2. Scan custom assessment options (Angular, React, Vue, Material)
+      if (candidates.length < 2) {
+        const customSelectors = [
+          "mat-radio-button",
+          ".mat-radio-button",
+          "[role=radio]",
+          "[role=option]",
+          ".p-radiobutton",
+          ".ant-radio-wrapper",
+          ".option",
+          ".choice",
+          ".answer-option",
+          ".q-option",
+          "[class*='option-item']",
+          "[class*='choice-item']",
+          "[data-option]"
+        ];
+        const customEls = [...document.querySelectorAll(customSelectors.join(","))];
+        const leafCustom = customEls.filter(el => !customEls.some(other => other !== el && el.contains(other)));
+        leafCustom.forEach((el, idx) => {
+          if (seenNodes.has(el)) return;
+          seenNodes.add(el);
+          const inp = el.querySelector("input[type=radio], input[type=checkbox]");
+          const lbl = el.tagName === "LABEL" ? el : el.querySelector("label");
+          candidates.push({ input: inp, label: lbl, container: el, text: (el.innerText || `Option ${String.fromCharCode(65 + idx)}`).trim(), idx });
+        });
+      }
+
+      function applySelection(cand) {
+        if (!cand) return false;
+        const { input, label, container } = cand;
+        const clickList = [];
+        if (label) clickList.push(label);
+        if (container && !clickList.includes(container)) clickList.push(container);
+        if (input && !clickList.includes(input)) clickList.push(input);
+
+        const dot = container?.querySelector?.(".custom-control-label, .checkmark, .radio-btn, .mat-radio-inner-circle, .mat-radio-outer-circle, .mat-radio-container, span[class*='radio'], span[class*='check'], span[class*='dot'], span[class*='circle']");
+        if (dot && !clickList.includes(dot)) clickList.unshift(dot);
+
+        const clickProps = { bubbles: true, cancelable: true, view: window, buttons: 1, button: 0 };
+        const mouseEvents = ["pointerdown", "mousedown", "pointerup", "mouseup", "click"];
+
+        // 1. Natural coordinate click on the option circle / radio element
+        const primaryEl = dot || label || container || input;
+        if (primaryEl) {
           try {
-            const nativeSet = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked')?.set;
-            if (nativeSet) nativeSet.call(inputEl, true);
-            else inputEl.checked = true;
-          } catch(e) { inputEl.checked = true; }
+            primaryEl.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+            const rect = primaryEl.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+              const clickX = rect.left + Math.min(24, Math.max(8, rect.width / 4));
+              const clickY = rect.top + rect.height / 2;
+              const targetEl = document.elementFromPoint(clickX, clickY) || primaryEl;
+              mouseEvents.forEach(evt => {
+                try { targetEl.dispatchEvent(new MouseEvent(evt, clickProps)); } catch(e){}
+              });
+              try { targetEl.click(); } catch(e){}
+            }
+          } catch(e){}
+        }
 
-          ["pointerdown", "mousedown", "pointerup", "mouseup", "input", "change", "click"].forEach(t => {
-            try { inputEl.dispatchEvent(new Event(t, { bubbles: true, cancelable: true })); } catch(e){}
+        // 2. Direct event dispatch to all candidate elements
+        for (const el of clickList) {
+          mouseEvents.forEach(evt => {
+            try { el.dispatchEvent(new MouseEvent(evt, clickProps)); } catch(e){}
           });
+          try { el.click(); } catch(e){}
         }
-        if (el) {
-          ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(t => {
-            try { el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true })); } catch(e){}
-          });
-          if (typeof el.click === "function") { try { el.click(); } catch(e){} }
+
+        // 3. Native property update and change/input event dispatch
+        if (input) {
+          try {
+            if (!input.checked) {
+              const nativeSet = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked')?.set;
+              if (nativeSet) nativeSet.call(input, true);
+              else input.checked = true;
+            }
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+          } catch(e){}
         }
+
+        // 4. Update aria & CSS state
+        if (container) {
+          try {
+            if (container.getAttribute("role") === "radio") container.setAttribute("aria-checked", "true");
+            container.classList.add("selected", "active", "checked");
+          } catch(e){}
+        }
+
         return true;
       }
 
-      // Step 1: Search <label> elements
-      const labels = [...document.querySelectorAll("label")];
-      let matchedLabel = labels.find(lbl => {
-        const txt = lbl.innerText.toLowerCase().trim();
-        return txt === lowerTarget || txt === coreTarget || txt.includes(lowerTarget) || (coreTarget.length > 2 && txt.includes(coreTarget));
+      function checkVerified(cand) {
+        if (!cand) return false;
+        const { input, label, container } = cand;
+        if (input && input.checked) return true;
+        const checkables = [input, label, container].filter(Boolean);
+        for (const el of checkables) {
+          if (el.getAttribute?.("aria-checked") === "true") return true;
+          const cls = String(el.className || "");
+          if (/(selected|active|checked|chosen|answered|mat-radio-checked)/i.test(cls)) return true;
+          if (el.querySelector?.("input:checked, [aria-checked='true'], .selected, .active, .checked, .mat-radio-checked")) return true;
+        }
+
+        // Check if any radio matching cand became checked
+        const anyChecked = document.querySelector("input[type=radio]:checked, [role=radio][aria-checked='true'], .mat-radio-checked");
+        if (anyChecked) {
+          if (cand.container?.contains(anyChecked) || cand.input === anyChecked || cand.label?.contains(anyChecked)) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      // Match best candidate
+      let matchedCand = null;
+
+      // 1. Direct index match if option letter was provided (A=0, B=1, C=2, D=3)
+      if (targetIdx >= 0 && targetIdx < candidates.length) {
+        matchedCand = candidates[targetIdx];
+      }
+
+      // 2. Score by text
+      let bestScore = -1;
+      let textBest = null;
+      for (const c of candidates) {
+        const cTxt = c.text.toLowerCase().trim();
+        const cleanCTxt = cTxt
+          .replace(/^(?:option\s+)?\(?[a-e0-9]\)?(?:\s*[\.\:\-\)]\s*|\s+)/i, "")
+          .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+          .trim();
+
+        let score = 0;
+        if (cTxt === lowerTarget || cleanCTxt === coreTarget || cTxt === coreTarget) {
+          score = 100;
+        } else if (coreTarget.length >= 2) {
+          if (cleanCTxt.startsWith(coreTarget) || cTxt.startsWith(coreTarget)) score = 85;
+          else if (cleanCTxt.includes(coreTarget) || cTxt.includes(coreTarget)) score = 70;
+          else if (coreTarget.includes(cleanCTxt) && cleanCTxt.length >= 3) score = 60;
+        }
+
+        // Agreement bonus if candidate index matches option letter
+        if (targetIdx >= 0 && c.idx === targetIdx) {
+          score += 25;
+        }
+
+        if (score > bestScore) {
+          bestScore = score;
+          textBest = c;
+        }
+      }
+
+      if (bestScore >= 60 && textBest) {
+        matchedCand = textBest;
+      } else if (!matchedCand && textBest && bestScore > 0) {
+        matchedCand = textBest;
+      }
+
+      // 3. Fallback to candidate at targetIdx
+      if (!matchedCand && targetIdx >= 0 && candidates.length > 0) {
+        matchedCand = candidates[Math.min(targetIdx, candidates.length - 1)];
+      }
+
+      // 4. Fallback to general label search
+      if (!matchedCand && (coreTarget || lowerTarget)) {
+        const labels = [...document.querySelectorAll("label, .option, .choice, mat-radio-button")];
+        let lbl = labels.find(l => {
+          const t = l.innerText.toLowerCase().trim();
+          return t === lowerTarget || t === coreTarget || (coreTarget.length >= 3 && t.includes(coreTarget));
+        });
+        if (lbl) {
+          const inp = lbl.querySelector?.("input[type=radio]") || lbl.parentElement?.querySelector?.("input[type=radio]");
+          matchedCand = { input: inp, label: lbl.tagName === "LABEL" ? lbl : null, container: lbl, text: lbl.innerText.trim(), idx: 0 };
+        }
+      }
+
+      // 5. Final fallback to first candidate if options exist
+      if (!matchedCand && candidates.length > 0) {
+        matchedCand = candidates[0];
+      }
+
+      if (matchedCand) {
+        applySelection(matchedCand);
+        let verified = checkVerified(matchedCand);
+
+        // Active retry on failure
+        if (!verified && matchedCand.container) {
+          try {
+            const rect = matchedCand.container.getBoundingClientRect();
+            const centerEl = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+            if (centerEl) {
+              ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(evt => {
+                try { centerEl.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window, buttons: 1, button: 0 })); } catch(e){}
+              });
+              try { centerEl.click(); } catch(e){}
+            }
+          } catch(e){}
+          verified = checkVerified(matchedCand);
+        }
+
+        return JSON.stringify({
+          success: true,
+          verified,
+          text: matchedCand.text,
+          idx: matchedCand.idx
+        });
+      }
+
+      return JSON.stringify({
+        success: false,
+        verified: false,
+        error: "NOT_FOUND option: " + rawTarget
       });
-      if (matchedLabel) {
-        const forId = matchedLabel.getAttribute("for");
-        const input = forId ? document.getElementById(forId) : matchedLabel.querySelector("input[type=radio],input[type=checkbox]");
-        selectEl(matchedLabel, input);
-        return "selected label: " + matchedLabel.innerText.trim();
-      }
-
-      // Step 2: Search <input type=radio> and <input type=checkbox>
-      const radios = [...document.querySelectorAll("input[type=radio], input[type=checkbox]")];
-      for (const r of radios) {
-        const container = r.closest("li,div,tr,p,td,span,label") || r.parentElement;
-        const txt = (container?.innerText || r.value || "").toLowerCase().trim();
-        if (txt === lowerTarget || txt === coreTarget || txt.includes(lowerTarget) || (coreTarget.length > 2 && txt.includes(coreTarget))) {
-          selectEl(container || r, r);
-          return "selected radio: " + txt;
-        }
-      }
-
-      // Step 3: Search Custom Option Containers (div, li, span, tr, [role=radio], etc.)
-      const customCandidates = [...document.querySelectorAll("[role=radio], [role=option], .option, .choice, .q-option, [class*='option'], [class*='choice'], li, div, p, tr, td")];
-      let bestMatch = null;
-      for (const candidate of customCandidates) {
-        const txt = (candidate.innerText || "").toLowerCase().trim();
-        if (!txt || txt.length > 250) continue;
-        if (txt === lowerTarget || txt === coreTarget || (coreTarget.length > 3 && txt.includes(coreTarget))) {
-          bestMatch = candidate;
-          break;
-        }
-      }
-      if (bestMatch) {
-        const childInp = bestMatch.querySelector("input[type=radio], input[type=checkbox]");
-        selectEl(bestMatch, childInp);
-        return "selected custom element: " + bestMatch.innerText.trim();
-      }
-
-      // Step 4: Fallback to Option Index if letter A/B/C/D was detected
-      if (targetIdx >= 0) {
-        if (radios.length > targetIdx) {
-          const r = radios[targetIdx];
-          const container = r.closest("li,div,tr,p,td,span,label") || r.parentElement;
-          selectEl(container || r, r);
-          return `selected radio at index ${targetIdx}`;
-        }
-        const optionEls = [...document.querySelectorAll("[role=radio], [role=option], .option, .choice, .q-option, [class*='option'], [class*='choice']")];
-        if (optionEls.length > targetIdx) {
-          const el = optionEls[targetIdx];
-          const childInp = el.querySelector("input[type=radio], input[type=checkbox]");
-          selectEl(el, childInp);
-          return `selected option element at index ${targetIdx}`;
-        }
-      }
-
-      return "NOT_FOUND option: " + targetText;
     }
 
     case "type": {
@@ -877,20 +2339,108 @@ async function forceNextOnPage(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
     func: () => {
-      const allBtns = [...document.querySelectorAll("a, button, input[type=submit], [role=button]")];
+      const now = Date.now();
+      if (window.__lastNextClickTime && (now - window.__lastNextClickTime < 1000)) {
+        return;
+      }
+
+      // If MCQ options exist and none is selected, auto-select the first option before forcing advance
+      const hasAnySelected = () => {
+        if (document.querySelector("input[type=radio]:checked, input[type=checkbox]:checked")) return true;
+        if (document.querySelector("[role=radio][aria-checked='true'], [role=option][aria-selected='true']")) return true;
+        if (document.querySelector(".mat-radio-checked, .ant-radio-checked, .p-radiobutton-checked")) return true;
+        if (document.querySelector(".option.selected, .option.active, .choice.selected, .choice.active")) return true;
+        return false;
+      };
+
+      const hasOptions = document.querySelectorAll("input[type=radio], [role=radio], .mat-radio-button, .option, .choice").length > 0;
+      if (hasOptions && !hasAnySelected()) {
+        const firstOpt = document.querySelector("input[type=radio], [role=radio], .mat-radio-button, .option, .choice");
+        if (firstOpt) {
+          try {
+            firstOpt.click();
+            if (firstOpt.type === "radio") firstOpt.checked = true;
+          } catch(e){}
+        }
+      }
+
+      const allBtns = [...document.querySelectorAll("a, button, input[type=submit], input[type=button], [role=button]")];
       // HARDCODED: Never force-click Submit/Finish/End buttons
       const isSubmit = el => /(submit|finish|end test|end quiz|done)/i.test((el.innerText || el.value || "").trim());
-      const eligible = allBtns.filter(el => !isSubmit(el));
-      const btn = eligible.find(el => /next/i.test(el.innerText || el.value || ""))
-               || eligible.find(el => /→|>|»/.test(el.innerText || ""));
+      const eligible = allBtns.filter(el => !isSubmit(el) && !el.disabled && el.getAttribute("aria-disabled") !== "true" && el.offsetParent !== null);
+
+      // STRICT EXCLUSIVITY: Pick EXACTLY ONE button
+      // Priority 1: Save & Next / Save and Next / Save & Proceed / Save & Continue
+      let btn = eligible.find(el => /(save\s*(&|and|\+)?\s*(next|proceed|continue)|save\s+next)/i.test((el.innerText || el.value || "").trim()));
+
+      // Priority 2: Next / Continue / Proceed
+      if (!btn) {
+        btn = eligible.find(el => /\bnext\s*(question)?\b/i.test((el.innerText || el.value || "").trim()))
+           || eligible.find(el => /\b(continue|proceed)\b/i.test((el.innerText || el.value || "").trim()))
+           || eligible.find(el => /next/i.test((el.innerText || el.value || "").trim()))
+           || eligible.find(el => /→|>|»/.test((el.innerText || "").trim()));
+      }
+
+      // Priority 3: Standalone Save (only if no Next button of any kind exists)
+      if (!btn) {
+        btn = eligible.find(el => /^\s*save\s*$/i.test((el.innerText || el.value || "").trim()));
+      }
+
       if (btn) {
-        // Page scrolling disabled
-        ["mousedown","mouseup"].forEach(t => btn.dispatchEvent(new MouseEvent(t, {bubbles:true, cancelable:true})));
-        btn.click();
-        if (btn.tagName === "A" && btn.href && !btn.href.startsWith("javascript")) window.location.href = btn.href;
+        window.__lastNextClickTime = now;
+        try { btn.scrollIntoView?.({ block: "nearest", inline: "nearest" }); } catch(e){}
+
+        const clickProps = { bubbles: true, cancelable: true, view: window, buttons: 1, button: 0 };
+        // Dispatch mouse preparation events — DO NOT dispatch "click" in the array!
+        ["pointerdown", "mousedown", "pointerup", "mouseup"].forEach(t => {
+          try { btn.dispatchEvent(new MouseEvent(t, clickProps)); } catch(e){}
+        });
+
+        let clicked = false;
+        try {
+          btn.click();
+          clicked = true;
+        } catch(e){}
+        if (!clicked) {
+          try { btn.dispatchEvent(new MouseEvent("click", clickProps)); } catch(e){}
+        }
       }
     }
   });
+}
+
+async function navigateToQuestion(tabId, targetQNum) {
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (targetQ) => {
+        const qStr = String(targetQ).trim();
+        // Look for buttons, links, or clickable palette numbers matching targetQ
+        const elements = [...document.querySelectorAll("button, a, [role=button], .q-box, .palette-item, [class*='question'], [class*='palette'], div, span")];
+        const match = elements.find(el => {
+          const txt = (el.innerText || "").trim();
+          if (txt !== qStr) return false;
+          const isClickable = el.tagName === "BUTTON" || el.tagName === "A" || el.getAttribute("role") === "button"
+            || (el.className && /(palette|question|item|btn|box|cell|circle|qnum)/i.test(String(el.className)))
+            || el.parentElement?.className?.includes("palette");
+          return isClickable && el.offsetParent !== null;
+        });
+
+        if (match) {
+          ["pointerdown", "mousedown", "pointerup", "mouseup"].forEach(t => {
+            try { match.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window, buttons: 1, button: 0 })); } catch(e){}
+          });
+          try { match.click(); } catch(e){}
+          return true;
+        }
+        return false;
+      },
+      args: [targetQNum]
+    });
+    return res?.[0]?.result === true;
+  } catch (e) {
+    return false;
+  }
 }
 
 function isTestFinished(snap) {
@@ -952,8 +2502,20 @@ async function runAutoLoop(userMsg, tab) {
     if (currentTab.url) updatePageUrlDisplay(currentTab.url);
 
     await waitForTabLoad(currentTab.id, 3000);
-    const preSnap = await getPageSnapshot(currentTab.id);
+    let preSnap = await getPageSnapshot(currentTab.id);
     if (!preSnap) { addLog("error","err","Cannot read page."); break; }
+
+    // If no radio options detected, wait briefly in case Angular/React is still rendering the question
+    if ((!preSnap.radioOptions || preSnap.radioOptions.length === 0) && !isTestFinished(preSnap)) {
+      for (let w = 0; w < 6; w++) {
+        await sleep(350);
+        const retrySnap = await getPageSnapshot(currentTab.id);
+        if (retrySnap?.radioOptions && retrySnap.radioOptions.length > 0) {
+          preSnap = retrySnap;
+          break;
+        }
+      }
+    }
 
     const qNum = preSnap.questionNumber;
     const fromUrl = preSnap.url;
@@ -1003,7 +2565,11 @@ async function runAutoLoop(userMsg, tab) {
     catch(e) { addLog("error","api",e.message); break; }
 
     const { text, actions } = parseAI(raw);
-    addLog("agent","groq", text);
+    const provName = getActiveProvider().name.toLowerCase();
+    const hasSelectRadio = actions.some(a => a.action === "select_radio");
+    if (text && !hasSelectRadio) {
+      addLog("agent", provName, text);
+    }
 
     // HARDCODED: Strip any submit/finish actions before executing
     let safeActions = actions.filter(a => {
@@ -1011,9 +2577,37 @@ async function runAutoLoop(userMsg, tab) {
       return true;
     });
 
+    const hasRadioOnPage = (preSnap.radioOptions || []).length > 0;
+    const hasSelectRadioAction = safeActions.some(a => a.action === "select_radio");
+
+    if (hasRadioOnPage && !hasSelectRadioAction) {
+      // AI omitted select_radio: auto-detect chosen option from text or default to A
+      const letterMatch = (text || "").match(/\b([A-E])\b/) || (raw || "").match(/\b([A-E])\b/);
+      const chosenOpt = letterMatch ? letterMatch[1].toUpperCase() : "A";
+      safeActions.unshift({
+        action: "select_radio",
+        params: { option: chosenOpt, text: chosenOpt }
+      });
+      addLog("info", "auto", `Auto-injected selection for Option [${chosenOpt}]`);
+    }
+
     if (currentQ >= endQVal) {
       safeActions = safeActions.filter(a => a.action !== "click_next" && a.action !== "navigate");
     }
+
+    // STRICT SANITIZATION: Ensure safeActions contains AT MOST ONE advancement action
+    let seenAdvanceAction = false;
+    safeActions = safeActions.filter(a => {
+      const isAdvance = a.action === "click_next" || (a.action === "click" && /(next|save\s*(&|and)?\s*next|proceed|continue)/i.test(a.params?.selector || ""));
+      if (isAdvance) {
+        if (seenAdvanceAction) return false;
+        seenAdvanceAction = true;
+        a.action = "click_next";
+      }
+      return true;
+    });
+
+    const expectedNextQ = (currentQ !== null && !isNaN(currentQ)) ? (currentQ + 1) : null;
 
     await executeActions(currentTab.id, safeActions);
     lastQNum = qNum;
@@ -1028,8 +2622,8 @@ async function runAutoLoop(userMsg, tab) {
 
     // If AI didn't click next, force it
     const didClickNext = safeActions.some(a => a.action === "click_next");
-    if (!didClickNext) {
-      addLog("info","warn","AI didn't use click_next — forcing...");
+    if (!didClickNext && currentQ < endQVal) {
+      addLog("info","warn","AI didn't use click_next — forcing advance...");
       await forceNextOnPage(currentTab.id);
       await sleep(1500);
     }
@@ -1045,6 +2639,20 @@ async function runAutoLoop(userMsg, tab) {
       if (result2.finished) { autoLoopActive = false; addLog("info","done","✅ Test completed!"); break; }
     }
 
+    // Safety & Self-Healing: Detect if portal skipped ahead over a question (e.g. Q17 -> Q19)
+    const afterQ = result.qNum;
+    if (expectedNextQ !== null && afterQ !== null && afterQ > expectedNextQ && expectedNextQ <= endQVal) {
+      addLog("info", "warn", `⚠️ Jump detected: page is on Q${afterQ} (skipped Q${expectedNextQ}). Navigating to Q${expectedNextQ} via palette...`);
+      const recovered = await navigateToQuestion(currentTab.id, expectedNextQ);
+      if (recovered) {
+        await sleep(1200);
+        const checkSnap = await getPageSnapshot(currentTab.id);
+        if (checkSnap?.questionNumber === expectedNextQ) {
+          addLog("info", "done", `✓ Successfully recovered to Q${expectedNextQ}`);
+        }
+      }
+    }
+
     await sleep(300);
   }
 
@@ -1055,7 +2663,12 @@ async function runAutoLoop(userMsg, tab) {
 async function handleSend() {
   const userMsg = cmdInput.value.trim();
   if (!userMsg) return;
-  if (apiKeys.length === 0) { addLog("error","keys","No API keys! Click ⚙ keys to add your Groq keys."); return; }
+  const activeProv = getActiveProvider();
+  const isLocalProv = /localhost|127\.0\.0\.1|0\.0\.0\.0|::1/i.test(activeProv.url);
+  if (apiKeys.length === 0 && !isLocalProv) {
+    addLog("error", "keys", `No API keys! Click ⚙ Keys to add your ${activeProv.name} API key.`);
+    return;
+  }
 
   cmdInput.value = ""; autoResize();
   addLog("user","you", userMsg);
@@ -1079,7 +2692,11 @@ async function handleSend() {
       ];
       const raw = await callGroq(messages);
       const { text, actions } = parseAI(raw);
-      addLog("agent","groq", text);
+      const provName = getActiveProvider().name.toLowerCase();
+      const hasSelectRadio = actions.some(a => a.action === "select_radio");
+      if (text && !hasSelectRadio) {
+        addLog("agent", provName, text);
+      }
       if (actions.length > 0 && tab) {
         let safeActions = actions.filter(a => {
           if (a.action === "click" && /(submit|finish|end test|end quiz|done)/i.test(a.params?.selector || "")) return false;
@@ -1233,19 +2850,164 @@ if (pageBar) {
   pageBar.addEventListener("click", copyCurrentUrl);
 }
 
-(async () => { await loadKeys(); const tab = await getCurrentTab(); if (tab?.url) updatePageUrlDisplay(tab.url); })();
+// ── Model Selection Listeners ────────────────────────────────────────────────
+if (modelSelect) {
+  modelSelect.addEventListener("change", async () => {
+    const val = modelSelect.value;
+    if (val === "custom") {
+      if (customModelRow) customModelRow.style.display = "flex";
+      if (customModelInput) {
+        customModelInput.focus();
+        const customVal = customModelInput.value.trim();
+        if (customVal) {
+          await setModel(customVal, true);
+        }
+      }
+    } else {
+      if (customModelRow) customModelRow.style.display = "none";
+      await setModel(val, false);
+    }
+  });
+}
 
-chrome.tabs.onActivated.addListener(async () => {
+if (saveCustomModelBtn) {
+  saveCustomModelBtn.addEventListener("click", async () => {
+    const val = (customModelInput?.value || "").trim();
+    if (!val) {
+      addLog("error", "model", "Please enter a valid model identifier.");
+      return;
+    }
+    await setModel(val, true);
+  });
+}
+
+if (customModelInput) {
+  customModelInput.addEventListener("keydown", async (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const val = customModelInput.value.trim();
+      if (val) {
+        await setModel(val, true);
+      }
+    }
+  });
+}
+
+// ── Provider Event Listeners ──────────────────────────────────────────────────
+if (openProviderModalBtn) {
+  openProviderModalBtn.addEventListener("click", () => {
+    resetProviderForm();
+    if (providerModalOverlay) providerModalOverlay.classList.add("active");
+  });
+}
+
+if (closeProviderModalBtn) {
+  closeProviderModalBtn.addEventListener("click", () => {
+    if (providerModalOverlay) providerModalOverlay.classList.remove("active");
+  });
+}
+
+if (providerModalOverlay) {
+  providerModalOverlay.addEventListener("click", (e) => {
+    if (e.target === providerModalOverlay) {
+      providerModalOverlay.classList.remove("active");
+    }
+  });
+}
+
+if (cancelEditProviderBtn) {
+  cancelEditProviderBtn.addEventListener("click", resetProviderForm);
+}
+
+if (saveProviderBtn) {
+  saveProviderBtn.addEventListener("click", handleSaveProvider);
+}
+
+const clearAllProvidersBtn = document.getElementById("clearAllProvidersBtn");
+if (clearAllProvidersBtn) {
+  clearAllProvidersBtn.addEventListener("click", clearAllCustomProviders);
+}
+
+if (providerSelect) {
+  providerSelect.addEventListener("change", async () => {
+    const val = providerSelect.value;
+    if (val === "__add_new__") {
+      resetProviderForm();
+      if (providerModalOverlay) providerModalOverlay.classList.add("active");
+      if (provNameInput) provNameInput.focus();
+      providerSelect.value = activeProviderId;
+    } else if (val === "__manage__") {
+      if (providerModalOverlay) providerModalOverlay.classList.add("active");
+      providerSelect.value = activeProviderId;
+      setTimeout(() => {
+        const listContainer = document.getElementById("providersListContainer");
+        if (listContainer) {
+          listContainer.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      }, 50);
+    } else {
+      await switchProvider(val);
+    }
+  });
+}
+
+// Preset chips click listeners
+document.querySelectorAll(".preset-chip").forEach(chip => {
+  chip.addEventListener("click", () => {
+    const key = chip.getAttribute("data-preset");
+    const p = PRESETS[key];
+    if (p) {
+      if (provNameInput) provNameInput.value = p.name;
+      if (provUrlInput) provUrlInput.value = p.url;
+      if (provModelInput) provModelInput.value = p.model;
+      if (p.key && provKeyInput) {
+        provKeyInput.value = p.key;
+      } else if (provKeyInput) {
+        provKeyInput.focus();
+      }
+      showProviderFeedback(`Loaded ${p.name} preset.`, "success");
+    }
+  });
+});
+
+if (providerStatusBadge) {
+  providerStatusBadge.addEventListener("click", () => {
+    triggerProviderStatusCheck();
+  });
+}
+
+if (toggleProvKeyPwBtn && provKeyInput) {
+  toggleProvKeyPwBtn.addEventListener("click", () => {
+    const isPw = provKeyInput.type === "password";
+    provKeyInput.type = isPw ? "text" : "password";
+    const icon = toggleProvKeyPwBtn.querySelector(".material-symbols-rounded");
+    if (icon) icon.textContent = isPw ? "visibility_off" : "visibility";
+  });
+}
+
+(async () => {
+  await loadProviders();
+  await loadKeys();
+  await loadModel();
   const tab = await getCurrentTab();
   if (tab?.url) updatePageUrlDisplay(tab.url);
-});
+})();
 
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.url || changeInfo.status === 'complete') {
-    const currentTab = await getCurrentTab();
-    if (currentTab && currentTab.id === tabId && currentTab.url) {
-      updatePageUrlDisplay(currentTab.url);
+if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.onActivated) {
+  chrome.tabs.onActivated.addListener(async () => {
+    const tab = await getCurrentTab();
+    if (tab?.url) updatePageUrlDisplay(tab.url);
+  });
+}
+
+if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.onUpdated) {
+  chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+    if (changeInfo.url || changeInfo.status === 'complete') {
+      const currentTab = await getCurrentTab();
+      if (currentTab && currentTab.id === tabId && currentTab.url) {
+        updatePageUrlDisplay(currentTab.url);
+      }
     }
-  }
-});
+  });
+}
 
